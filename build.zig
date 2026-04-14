@@ -95,9 +95,13 @@ fn addExe(
 
     // Explicit targets (release) need manual library paths
     if (optimize == .ReleaseSmall) {
-        exe.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
-        exe.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib/x86_64-linux-gnu" });
         exe.root_module.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });
+        // Fedora/RHEL
+        exe.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
+        // Debian/Ubuntu
+        if (std.fs.accessAbsolute("/usr/lib/x86_64-linux-gnu", .{})) |_|
+            exe.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib/x86_64-linux-gnu" })
+        else |_| {}
     }
     exe.step.dependOn(bpf_step);
     return exe;
