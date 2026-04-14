@@ -1,0 +1,198 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ZIG_VERSION: "0.15.1"
+  SYSTEMD_VERSION: "v257"
+  LIBBPF_VERSION: "v1.6.1"
+  LIBCAP_VERSION: "2.73"
+  UPX_VERSION: "5.1.1"
+
+jobs:
+  build-static:
+    name: Static build (x86_64 musl)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            musl-tools clang llvm \
+            meson ninja-build pkg-config \
+            python3-jinja2 gperf \
+            libmount-dev libcap-dev \
+            zlib1g-dev
+
+      - name: Install Zig
+        run: |
+          curl -L "https://ziglang.org/download/$ZIG_VERSION/zig-linux-x86_64-$ZIG_VERSION.tar.xz" | tar xJ
+          echo "$PWD/zig-linux-x86_64-$ZIG_VERSION" >> "$GITHUB_PATH"
+
+      - name: Install UPX
+        run: |
+          curl -L "https://github.com/upx/upx/releases/download/v$UPX_VERSION/upx-$UPX_VERSION-amd64_linux.tar.xz" | tar xJ
+          sudo cp "upx-$UPX_VERSION-amd64_linux/upx" /usr/local/bin/
+
+      - name: Cache musl sysroot
+        id: cache-sysroot
+        uses: actions/cache@v4
+        with:
+          path: /tmp/musl-sysroot
+          key: musl-sysroot-x86_64-systemd${{ env.SYSTEMD_VERSION }}-libbpf${{ env.LIBBPF_VERSION }}-v3
+
+      - name: Build musl sysroot
+        if: steps.cache-sysroot.outputs.cache-hit != 'true'
+        env:
+          SYSROOT: /tmp/musl-sysroot
+        run: |
+          set -ex
+          mkdir -p "$SYSROOT"/{lib,include}
+          CC=musl-gcc
+          CFLAGS="-O2 -fPIC"
+
+          # --- zlib ---
+          git clone --depth=1 https://github.com/madler/zlib /tmp/zlib
+          cd /tmp/zlib
+          CC="$CC" CFLAGS="$CFLAGS" ./configure --prefix="$SYSROOT" --static
+          make -j"$(nproc)" && make install
+          cd "$GITHUB_WORKSPACE"
+
+          # --- libelf (from elfutils) ---
+          curl -L "https://sourceware.org/elfutils/ftp/0.192/elfutils-0.192.tar.bz2" | tar xj -C /tmp
+          cd /tmp/elfutils-0.192
+          CC="$CC" CFLAGS="$CFLAGS" ./configure \
+            --prefix="$SYSROOT" \
+            --disable-debuginfod --disable-libdebuginfod \
+            --disable-demangler --disable-nls \
+            --without-lzma --without-bzlib --without-zstd
+          make -j"$(nproc)" -C lib
+          make -j"$(nproc)" -C libelf
+          make -C libelf install
+          cd "$GITHUB_WORKSPACE"
+
+          # --- libcap ---
+          curl -L "https://kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-$LIBCAP_VERSION.tar.xz" | tar xJ -C /tmp
+          cd "/tmp/libcap-$LIBCAP_VERSION"
+          make -j"$(nproc)" CC="$CC" BUILD_CC=gcc CFLAGS="$CFLAGS" \
+            lib=lib prefix="$SYSROOT" SHARED=no PTHREADS=no
+          make install SHARED=no PTHREADS=no lib=lib prefix="$SYSROOT" RAISE_SETFCAP=no
+          cd "$GITHUB_WORKSPACE"
+
+          # --- libbpf ---
+          git clone --depth=1 -b "$LIBBPF_VERSION" https://github.com/libbpf/libbpf /tmp/libbpf
+          cd /tmp/libbpf/src
+          CC="$CC" CFLAGS="$CFLAGS -I$SYSROOT/include" LDFLAGS="-L$SYSROOT/lib" \
+            make -j"$(nproc)" BUILD_STATIC_ONLY=1 \
+            OBJDIR=/tmp/libbpf-build DESTDIR="$SYSROOT" prefix=/ install
+          cd "$GITHUB_WORKSPACE"
+
+          # --- libsystemd ---
+          git clone --depth=1 -b "$SYSTEMD_VERSION" https://github.com/systemd/systemd /tmp/systemd
+          cd /tmp/systemd
+          CC="$CC" \
+          PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig" \
+          CFLAGS="$CFLAGS -I$SYSROOT/include" \
+          LDFLAGS="-L$SYSROOT/lib" \
+          meson setup build \
+            --default-library=static \
+            -Dstatic-libsystemd=true -Dmode=release \
+            -Dselinux=disabled -Dapparmor=disabled -Daudit=disabled \
+            -Dkmod=disabled -Dpam=disabled -Dacl=disabled \
+            -Dmicrohttpd=disabled -Dlibcryptsetup=disabled \
+            -Dlibcurl=disabled -Dlibidn2=disabled -Dlibiptc=disabled \
+            -Dqrencode=disabled -Dgcrypt=disabled -Dgnutls=disabled \
+            -Dopenssl=disabled -Dp11kit=disabled -Dlibfido2=disabled \
+            -Dtpm2=disabled -Dpolkit=disabled -Dblkid=disabled \
+            -Dfdisk=disabled -Dpwquality=disabled -Dpasswdqc=disabled \
+            -Dbzip2=disabled -Dlz4=disabled -Dxz=disabled \
+            -Dzstd=disabled -Dzlib=enabled -Dxkbcommon=disabled \
+            -Dpcre2=disabled -Dglib=disabled -Ddbus=disabled \
+            -Dman=disabled -Dhtml=disabled \
+            -Dtests=false -Dinstall-tests=false \
+            -Dfuzz-tests=false -Dslow-tests=false \
+            -Dxdg-autostart=false
+          ninja -C build src/libsystemd/libsystemd.a
+          cp build/src/libsystemd/libsystemd.a "$SYSROOT/lib/"
+          mkdir -p "$SYSROOT/include/systemd"
+          cp src/systemd/sd-journal.h "$SYSROOT/include/systemd/"
+          cp src/systemd/sd-id128.h "$SYSROOT/include/systemd/"
+          cp src/systemd/_sd-common.h "$SYSROOT/include/systemd/"
+          cd "$GITHUB_WORKSPACE"
+
+          echo "=== Sysroot static libs ==="
+          find "$SYSROOT/lib" -name '*.a' | sort
+
+      - name: Build ssh-notifier (fully static)
+        run: zig build release-static -Dmusl-sysroot=/tmp/musl-sysroot
+
+      - name: Verify binary
+        run: |
+          BIN=zig-out/release/ssh-notifier-x86_64-linux-static
+          file "$BIN"
+          ls -lh "$BIN"
+          ldd "$BIN" 2>&1 || true
+          readelf -d "$BIN" 2>&1 | grep NEEDED || echo "Fully static - no NEEDED entries"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-notifier-x86_64-linux-static
+          path: zig-out/release/ssh-notifier-x86_64-linux-static
+
+  build-dynamic:
+    name: Dynamic build (x86_64 glibc)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libsystemd-dev libbpf-dev
+
+      - name: Install Zig
+        run: |
+          curl -L "https://ziglang.org/download/$ZIG_VERSION/zig-linux-x86_64-$ZIG_VERSION.tar.xz" | tar xJ
+          echo "$PWD/zig-linux-x86_64-$ZIG_VERSION" >> "$GITHUB_PATH"
+
+      - name: Install UPX
+        run: |
+          curl -L "https://github.com/upx/upx/releases/download/v$UPX_VERSION/upx-$UPX_VERSION-amd64_linux.tar.xz" | tar xJ
+          sudo cp "upx-$UPX_VERSION-amd64_linux/upx" /usr/local/bin/
+
+      - name: Build
+        run: zig build release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-notifier-x86_64-linux
+          path: zig-out/release/ssh-notifier-x86_64-linux
+
+  release:
+    name: Create release
+    needs: [build-static, build-dynamic]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            artifacts/ssh-notifier-x86_64-linux-static/ssh-notifier-x86_64-linux-static
+            artifacts/ssh-notifier-x86_64-linux/ssh-notifier-x86_64-linux

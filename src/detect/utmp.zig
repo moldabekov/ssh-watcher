@@ -3,9 +3,25 @@ const SSHEvent = @import("../event.zig").SSHEvent;
 const Context = @import("backend.zig").Context;
 const logfile = @import("logfile.zig");
 
-const c = @cImport({
-    @cInclude("utmp.h");
-});
+// Native utmp definition — avoids @cImport so musl targets work.
+// Layout matches the Linux ABI (glibc/musl compatible, see utmp.h).
+const USER_PROCESS = 7;
+
+const Utmp = extern struct {
+    ut_type: i16,
+    _pad0: [2]u8 = undefined,
+    ut_pid: i32,
+    ut_line: [32]u8,
+    ut_id: [4]u8,
+    ut_user: [32]u8,
+    ut_host: [256]u8,
+    ut_exit: extern struct { e_termination: i16, e_exit: i16 },
+    ut_session: i32,
+    _pad1: [4]u8 = undefined,
+    ut_tv: extern struct { tv_sec: i32, tv_usec: i32 },
+    ut_addr_v6: [4]u32,
+    _unused: [20]u8,
+};
 
 pub fn run(ctx: *Context) void {
     runImpl(ctx) catch |err| {
@@ -29,13 +45,13 @@ fn scan(known: *std.AutoHashMap(u32, void), ctx: *Context, initial: bool) void {
     var current = std.AutoHashMap(u32, void).init(std.heap.page_allocator);
     defer current.deinit();
 
-    const sz = @sizeOf(c.struct_utmp);
-    var buf: [sz]u8 align(@alignOf(c.struct_utmp)) = undefined;
+    const sz = @sizeOf(Utmp);
+    var buf: [sz]u8 align(@alignOf(Utmp)) = undefined;
     while (true) {
         const n = file.read(&buf) catch break;
         if (n < sz) break;
-        const entry: *const c.struct_utmp = @ptrCast(&buf);
-        if (entry.ut_type != c.USER_PROCESS) continue;
+        const entry: *const Utmp = @ptrCast(&buf);
+        if (entry.ut_type != USER_PROCESS) continue;
         const pid: u32 = @intCast(entry.ut_pid);
         current.put(pid, {}) catch continue;
         const host = std.mem.sliceTo(&entry.ut_host, 0);
