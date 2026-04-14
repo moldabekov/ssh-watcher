@@ -8,6 +8,12 @@ const template = @import("../template.zig");
 const sink = @import("sink.zig");
 
 pub fn run(ctx: *sink.SinkContext) void {
+    // Probe once at startup — if no notification path works, disable silently
+    if (!probeNotifications()) {
+        std.log.warn("desktop: no notification daemon found, disabling desktop sink", .{});
+        return;
+    }
+
     while (!ctx.stopped()) {
         if (ctx.consumer.pop()) |ev| {
             if (!sink.shouldNotify(ctx.config, ev.event_type)) continue;
@@ -16,6 +22,24 @@ pub fn run(ctx: *sink.SinkContext) void {
             std.Thread.sleep(50 * std.time.ns_per_ms);
         }
     }
+}
+
+/// Check if any user has a reachable notification daemon.
+fn probeNotifications() bool {
+    var dir = std.fs.openDirAbsolute("/run/user", .{ .iterate = true }) catch return false;
+    defer dir.close();
+    var iter = dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (entry.kind != .directory) continue;
+        const uid = std.fmt.parseInt(std.posix.uid_t, entry.name, 10) catch continue;
+        var buf: [256]u8 = undefined;
+        const addr = std.fmt.bufPrint(&buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
+        // Try a full D-Bus connect + Hello — if it works, notifications can be delivered
+        var conn = dbus.Connection.connect(addr, uid) catch continue;
+        conn.close();
+        return true;
+    }
+    return false;
 }
 
 fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
