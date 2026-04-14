@@ -7,13 +7,14 @@ pub const Connection = struct {
     stream: net.Stream,
     serial: u32 = 1,
 
-    /// Connect to a D-Bus session bus. If target_uid is provided, authenticate
-    /// as that user (needed when running as root connecting to a user's bus).
-    pub fn connect(bus_address: []const u8, target_uid: ?std.posix.uid_t) !Connection {
+    /// Connect to a D-Bus session bus. Always authenticates as the process's
+    /// real UID — dbus-broker requires AUTH EXTERNAL UID to match SO_PEERCRED.
+    /// Root (UID 0) is allowed as a peer on user session buses by default policy.
+    pub fn connect(bus_address: []const u8) !Connection {
         const path = extractSocketPath(bus_address) orelse return error.InvalidArgument;
         const stream = try net.connectUnixSocket(path);
         var conn = Connection{ .stream = stream };
-        try conn.authenticate(target_uid);
+        try conn.authenticate();
         try conn.hello();
         return conn;
     }
@@ -22,10 +23,12 @@ pub const Connection = struct {
         self.stream.close();
     }
 
-    fn authenticate(self: *Connection, target_uid: ?std.posix.uid_t) !void {
+    fn authenticate(self: *Connection) !void {
         _ = try self.stream.write(&[_]u8{0});
-        // Use target UID for auth (so root can connect to user session buses)
-        const uid = target_uid orelse linux.getuid();
+        // Always use real UID — dbus-broker rejects AUTH EXTERNAL when the
+        // claimed UID doesn't match SO_PEERCRED. Root is allowed on user
+        // session buses by default bus policy.
+        const uid = linux.getuid();
         var uid_buf: [32]u8 = undefined;
         const uid_str = try std.fmt.bufPrint(&uid_buf, "{d}", .{uid});
         var hex_buf: [64]u8 = undefined;
