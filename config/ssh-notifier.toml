@@ -1,0 +1,36 @@
+# SSH Notifier configuration
+# System-wide: /etc/ssh-notifier/config.toml
+# Per-user:    ~/.config/ssh-notifier/config.toml
+
+[detection]
+backend = "auto"
+ssh_port = 22
+auth_timeout_seconds = 30
+
+[events]
+notify_on_connection = false
+notify_on_auth_success = true
+notify_on_auth_failure = true
+notify_on_disconnect = false
+
+[desktop]
+enabled = true
+urgency_connection = "low"
+urgency_success = "normal"
+urgency_failure = "critical"
+urgency_disconnect = "low"
+title_template = "SSH {event_type}"
+body_template = "{username}@{source_ip}:{source_port}"
+
+[log]
+enabled = false
+path = "/var/log/ssh-notifier.log"
+
+[webhook]
+enabled = false
+
+# [[webhook.endpoints]]
+# url = "https://hooks.slack.com/services/..."
+# timeout_seconds = 5
+# max_retries = 3
+# payload_template = '{"text": "SSH {event_type}: {username} from {source_ip}"}'
