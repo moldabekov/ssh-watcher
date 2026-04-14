@@ -5,12 +5,11 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // --- BPF compilation (shared by all targets) ---
+    // Recompile BPF probe if vmlinux.h is available; otherwise use committed .bpf.o.
+    // CI runners often lack the host kernel's BTF, so this keeps builds working.
     const bpf_compile = b.addSystemCommand(&.{
-        "clang",       "-target",  "bpf",
-        "-D__TARGET_ARCH_x86_64",
-        "-O2",         "-g",       "-I",
-        "bpf",         "-c",       "bpf/ssh_monitor.bpf.c",
-        "-o",          "src/detect/ssh_monitor.bpf.o",
+        "sh", "-c",
+        "test -f bpf/vmlinux.h && clang -target bpf -D__TARGET_ARCH_x86_64 -O2 -g -I bpf -c bpf/ssh_monitor.bpf.c -o src/detect/ssh_monitor.bpf.o || echo 'note: bpf/vmlinux.h not found, using committed .bpf.o'",
     });
 
     // --- Dev build (default) ---
@@ -51,9 +50,10 @@ pub fn build(b: *std.Build) void {
     const static_step = b.step("release-static", "Build fully static musl binary (needs -Dmusl-sysroot)");
     const musl_sysroot = b.option([]const u8, "musl-sysroot", "Path to musl sysroot with static libs");
 
+    // Each architecture needs its own musl sysroot with native .a files.
+    // aarch64 requires a cross-compilation sysroot (not yet supported in CI).
     inline for (.{
         .{ .arch = std.Target.Cpu.Arch.x86_64, .name = "x86_64-linux-static" },
-        .{ .arch = std.Target.Cpu.Arch.aarch64, .name = "aarch64-linux-static" },
     }) |rt| {
         if (musl_sysroot) |sysroot| {
             const resolved = b.resolveTargetQuery(.{ .cpu_arch = rt.arch, .os_tag = .linux, .abi = .musl });
@@ -119,18 +119,24 @@ fn addStaticExe(
             .strip = true,
         }),
     });
-    // All deps static from sysroot
-    exe.root_module.linkSystemLibrary("libsystemd", .{ .preferred_link_mode = .static });
+    // All deps static from sysroot — use bare names (linker prepends "lib")
+    // elogind archive has internal cross-deps — force whole inclusion
+    exe.root_module.addObjectFile(.{ .cwd_relative = b.fmt("{s}/lib/libelogind.a", .{sysroot}) });
     exe.root_module.linkSystemLibrary("bpf", .{ .preferred_link_mode = .static });
     exe.root_module.linkSystemLibrary("elf", .{ .preferred_link_mode = .static });
     exe.root_module.linkSystemLibrary("z", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("zstd", .{ .preferred_link_mode = .static });
     exe.root_module.linkSystemLibrary("cap", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("mount", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("blkid", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("udev", .{ .preferred_link_mode = .static });
     exe.root_module.link_libc = true;
     exe.want_lto = true;
 
     // Point to musl sysroot for headers and .a files
     exe.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/lib", .{sysroot}) });
     exe.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/include", .{sysroot}) });
+    exe.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
     exe.step.dependOn(bpf_step);
     return exe;
 }

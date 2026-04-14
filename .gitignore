@@ -3,4 +3,4 @@ zig-cache/
 .zig-cache/
 bpf/vmlinux.h
 bpf/*.bpf.o
-src/detect/*.bpf.o
+# src/detect/ssh_monitor.bpf.o is force-tracked — CI needs it when vmlinux.h is absent

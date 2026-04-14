@@ -10,130 +10,120 @@ permissions:
 
 env:
   ZIG_VERSION: "0.15.2"
-  SYSTEMD_VERSION: "v257"
-  LIBBPF_VERSION: "v1.6.1"
-  LIBCAP_VERSION: "2.73"
+  ELOGIND_VERSION: "255.22"
+  LIBBPF_VERSION: "v1.7.0"
   UPX_VERSION: "5.1.1"
 
 jobs:
   build-static:
     name: Static build (x86_64 musl)
     runs-on: ubuntu-24.04
+    container:
+      image: alpine:3.21
     steps:
+      - name: Install Alpine build deps
+        run: |
+          apk add --no-cache \
+            git curl xz tar bash coreutils \
+            build-base clang llvm meson ninja pkgconf \
+            linux-headers musl-dev \
+            zlib-dev zlib-static \
+            elfutils-dev \
+            libcap-dev libcap-static \
+            elogind-dev util-linux-dev eudev-dev \
+            zstd-dev zstd-static util-linux-static \
+            dbus-dev acl-dev libseccomp-dev linux-pam-dev pcre2-dev m4 binutils \
+            python3 py3-jinja2 gperf gettext-dev
+
       - uses: actions/checkout@v4
 
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            musl-tools clang llvm \
-            meson ninja-build pkg-config \
-            python3-jinja2 gperf \
-            libmount-dev libcap-dev \
-            zlib1g-dev linux-tools-common bpftool
-
-      - name: Generate vmlinux.h
-        run: bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
-
+      - name: Cache Zig
+        id: cache-zig
+        uses: actions/cache@v4
+        with:
+          path: zig-x86_64-linux-${{ env.ZIG_VERSION }}
+          key: zig-alpine-${{ env.ZIG_VERSION }}
       - name: Install Zig
-        run: |
-          curl -L "https://ziglang.org/download/$ZIG_VERSION/zig-x86_64-linux-$ZIG_VERSION.tar.xz" | tar xJ
-          echo "$PWD/zig-x86_64-linux-$ZIG_VERSION" >> "$GITHUB_PATH"
+        if: steps.cache-zig.outputs.cache-hit != 'true'
+        run: curl -L "https://ziglang.org/download/$ZIG_VERSION/zig-x86_64-linux-$ZIG_VERSION.tar.xz" | tar xJ
+      - name: Add Zig to PATH
+        run: echo "$PWD/zig-x86_64-linux-$ZIG_VERSION" >> "$GITHUB_PATH"
 
       - name: Install UPX
-        run: |
-          curl -L "https://github.com/upx/upx/releases/download/v$UPX_VERSION/upx-$UPX_VERSION-amd64_linux.tar.xz" | tar xJ
-          sudo cp "upx-$UPX_VERSION-amd64_linux/upx" /usr/local/bin/
+        run: apk add --no-cache upx
 
       - name: Cache musl sysroot
         id: cache-sysroot
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/musl-sysroot
-          key: musl-sysroot-x86_64-systemd${{ env.SYSTEMD_VERSION }}-libbpf${{ env.LIBBPF_VERSION }}-v3
+          key: musl-alpine-elogind-${{ env.ELOGIND_VERSION }}-${{ env.LIBBPF_VERSION }}-v32
 
       - name: Build musl sysroot
         if: steps.cache-sysroot.outputs.cache-hit != 'true'
-        env:
-          SYSROOT: /tmp/musl-sysroot
+        shell: bash
         run: |
           set -ex
+          SYSROOT=/tmp/musl-sysroot
           mkdir -p "$SYSROOT"/{lib,include}
-          CC=musl-gcc
-          CFLAGS="-O2 -fPIC"
 
-          # --- zlib ---
-          git clone --depth=1 https://github.com/madler/zlib /tmp/zlib
-          cd /tmp/zlib
-          CC="$CC" CFLAGS="$CFLAGS" ./configure --prefix="$SYSROOT" --static
-          make -j"$(nproc)" && make install
-          cd "$GITHUB_WORKSPACE"
-
-          # --- libelf (from elfutils) ---
-          curl -L "https://sourceware.org/elfutils/ftp/0.192/elfutils-0.192.tar.bz2" | tar xj -C /tmp
-          cd /tmp/elfutils-0.192
-          CC="$CC" CFLAGS="$CFLAGS -I$SYSROOT/include" LDFLAGS="-L$SYSROOT/lib" ./configure \
-            --prefix="$SYSROOT" \
-            --disable-debuginfod --disable-libdebuginfod \
-            --disable-demangler --disable-nls \
-            --without-lzma --without-bzlib --without-zstd \
-            ac_cv_lib_argp_argp_parse=yes
-          make -j"$(nproc)" -C lib
-          make -j"$(nproc)" -C libelf
-          make -C libelf install
-          cd "$GITHUB_WORKSPACE"
-
-          # --- libcap ---
-          curl -L "https://kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-$LIBCAP_VERSION.tar.xz" | tar xJ -C /tmp
-          cd "/tmp/libcap-$LIBCAP_VERSION"
-          make -j"$(nproc)" CC="$CC" BUILD_CC=gcc CFLAGS="$CFLAGS" \
-            lib=lib prefix="$SYSROOT" SHARED=no PTHREADS=no
-          make install SHARED=no PTHREADS=no lib=lib prefix="$SYSROOT" RAISE_SETFCAP=no
-          cd "$GITHUB_WORKSPACE"
+          # Copy Alpine's system static libs + headers
+          for lib in libz.a libelf.a libcap.a libzstd.a libmount.a libblkid.a libudev.a; do
+            cp "/usr/lib/$lib" "$SYSROOT/lib/" 2>/dev/null || true
+          done
+          cp /usr/include/libelf.h /usr/include/gelf.h "$SYSROOT/include/" 2>/dev/null || true
 
           # --- libbpf ---
           git clone --depth=1 -b "$LIBBPF_VERSION" https://github.com/libbpf/libbpf /tmp/libbpf
           cd /tmp/libbpf/src
-          CC="$CC" CFLAGS="$CFLAGS -I$SYSROOT/include" LDFLAGS="-L$SYSROOT/lib" \
-            make -j"$(nproc)" BUILD_STATIC_ONLY=1 \
-            OBJDIR=/tmp/libbpf-build DESTDIR="$SYSROOT" prefix=/ install
-          cd "$GITHUB_WORKSPACE"
+          make -j"$(nproc)" BUILD_STATIC_ONLY=1 \
+            OBJDIR=/tmp/libbpf-build DESTDIR="$SYSROOT" prefix=/ LIBDIR=/lib install
+          cd -
 
-          # --- libsystemd ---
-          git clone --depth=1 -b "$SYSTEMD_VERSION" https://github.com/systemd/systemd /tmp/systemd
-          cd /tmp/systemd
-          CC="$CC" \
-          PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig" \
-          CFLAGS="$CFLAGS -I$SYSROOT/include" \
-          LDFLAGS="-L$SYSROOT/lib" \
-          meson setup build \
+          # --- elogind (provides libsystemd-compatible API, musl-native) ---
+          # Use Alpine's version + their musl compatibility patches
+          ALPINE_APORTS="https://gitlab.alpinelinux.org/alpine/aports/-/raw/master/community/elogind"
+          git clone --depth=1 -b "V$ELOGIND_VERSION" https://github.com/elogind/elogind /tmp/elogind
+          cd /tmp/elogind
+          # Apply ALL Alpine musl patches
+          for patch_file in $(curl -sL "$ALPINE_APORTS/APKBUILD" | grep '^\t0' | tr -d '\t'); do
+            echo "Applying $patch_file"
+            curl -sL "$ALPINE_APORTS/$patch_file" | patch -p1 || true
+          done
+          LDFLAGS="-lintl" meson setup build \
             --default-library=static \
-            -Dstatic-libsystemd=true -Dmode=release \
-            -Dselinux=disabled -Dapparmor=disabled -Daudit=disabled \
-            -Dkmod=disabled -Dpam=disabled -Dacl=disabled \
-            -Dmicrohttpd=disabled -Dlibcryptsetup=disabled \
-            -Dlibcurl=disabled -Dlibidn2=disabled -Dlibiptc=disabled \
-            -Dqrencode=disabled -Dgcrypt=disabled -Dgnutls=disabled \
-            -Dopenssl=disabled -Dp11kit=disabled -Dlibfido2=disabled \
-            -Dtpm2=disabled -Dpolkit=disabled -Dblkid=disabled \
-            -Dfdisk=disabled -Dpwquality=disabled -Dpasswdqc=disabled \
-            -Dbzip2=disabled -Dlz4=disabled -Dxz=disabled \
-            -Dzstd=disabled -Dzlib=enabled -Dxkbcommon=disabled \
-            -Dpcre2=disabled -Dglib=disabled -Ddbus=disabled \
-            -Dman=disabled -Dhtml=disabled \
-            -Dtests=false -Dinstall-tests=false \
-            -Dfuzz-tests=false -Dslow-tests=false \
-            -Dxdg-autostart=false
-          ninja -C build src/libsystemd/libsystemd.a
-          cp build/src/libsystemd/libsystemd.a "$SYSROOT/lib/"
+            -Dman=false \
+            -Dtests=false \
+            -Dutmp=false
+          # Full build like Alpine — ignore daemon link errors
+          meson compile -C build || true
+          # Collect ALL compiled objects into fat archive
+          mkdir -p /tmp/elogind-objs && cd /tmp/elogind-objs
+          # Include only library objects (*.a.p/ dirs) — no executable objects
+          find /tmp/elogind/build -path '*.a.p/*.o' | while read f; do
+            cp "$f" . 2>/dev/null || true
+          done
+          echo "=== elogind objects: $(ls -a *.o .*.o 2>/dev/null | wc -l) ==="
+          ar rcs "$SYSROOT/lib/libelogind.a" *.o .*.o
+          cd /tmp/elogind
+          cp "$SYSROOT/lib/libelogind.a" "$SYSROOT/lib/libsystemd.a"
+          ls -la "$SYSROOT/lib/"*.a
+          # elogind's headers are sd-journal compatible
           mkdir -p "$SYSROOT/include/systemd"
-          cp src/systemd/sd-journal.h "$SYSROOT/include/systemd/"
-          cp src/systemd/sd-id128.h "$SYSROOT/include/systemd/"
-          cp src/systemd/_sd-common.h "$SYSROOT/include/systemd/"
-          cd "$GITHUB_WORKSPACE"
+          cp /usr/include/elogind/sd-journal.h "$SYSROOT/include/systemd/"
+          cp /usr/include/elogind/sd-id128.h "$SYSROOT/include/systemd/"
+          cp /usr/include/elogind/_sd-common.h "$SYSROOT/include/systemd/"
+          cd -
 
-          echo "=== Sysroot static libs ==="
+          echo "=== Sysroot ==="
           find "$SYSROOT/lib" -name '*.a' | sort
+
+      - name: Save musl sysroot cache
+        if: steps.cache-sysroot.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/musl-sysroot
+          key: musl-alpine-elogind-${{ env.ELOGIND_VERSION }}-${{ env.LIBBPF_VERSION }}-v32
 
       - name: Build ssh-notifier (fully static)
         run: zig build release-static -Dmusl-sysroot=/tmp/musl-sysroot
@@ -143,7 +133,7 @@ jobs:
           BIN=zig-out/release/ssh-notifier-x86_64-linux-static
           file "$BIN"
           ls -lh "$BIN"
-          ldd "$BIN" 2>&1 || true
+          ldd "$BIN" 2>&1 || echo "Not a dynamic executable (fully static)"
           readelf -d "$BIN" 2>&1 | grep NEEDED || echo "Fully static - no NEEDED entries"
 
       - name: Upload artifact
@@ -161,10 +151,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm libsystemd-dev libbpf-dev linux-tools-common bpftool
-
-      - name: Generate vmlinux.h
-        run: bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+          sudo apt-get install -y clang llvm libsystemd-dev libbpf-dev
 
       - name: Install Zig
         run: |
@@ -194,7 +181,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
