@@ -69,7 +69,7 @@ jobs:
           # --- libelf (from elfutils) ---
           curl -L "https://sourceware.org/elfutils/ftp/0.192/elfutils-0.192.tar.bz2" | tar xj -C /tmp
           cd /tmp/elfutils-0.192
-          CC="$CC" CFLAGS="$CFLAGS" ./configure \
+          CC="$CC" CFLAGS="$CFLAGS -I$SYSROOT/include" LDFLAGS="-L$SYSROOT/lib" ./configure \
             --prefix="$SYSROOT" \
             --disable-debuginfod --disable-libdebuginfod \
             --disable-demangler --disable-nls \
