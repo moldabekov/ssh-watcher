@@ -141,16 +141,19 @@ pub fn main() !void {
             }
         }
 
-        // Feed session table from ring buffer events
-        while (session_consumer.pop()) |ev| {
-            sessions.update(&ev);
+        // Session timeout inference — only for logfile/journal/utmp backends.
+        // eBPF detects auth_success directly via exec tracepoint and can't
+        // correlate connection PIDs to auth PIDs, so timeout inference would
+        // produce false auth_failure events.
+        if (backend_type != .ebpf) {
+            while (session_consumer.pop()) |ev| {
+                sessions.update(&ev);
+            }
+            const now: u64 = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
+            var timeout_events: [32]SSHEvent = undefined;
+            const n = sessions.checkTimeouts(now, timeout_ns, &timeout_events);
+            for (timeout_events[0..n]) |ev| ring.push(ev);
         }
-
-        // Session timeout check — infer auth_failure for connections with no exec
-        const now: u64 = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
-        var timeout_events: [32]SSHEvent = undefined;
-        const n = sessions.checkTimeouts(now, timeout_ns, &timeout_events);
-        for (timeout_events[0..n]) |ev| ring.push(ev);
 
         // SIGUSR1 status dump
         if (should_dump.load(.acquire)) {
