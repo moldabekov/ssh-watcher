@@ -69,14 +69,39 @@ fn parseDisconnectedUser(line: []const u8) ?ParseResult {
 }
 
 fn parseConnectionClosed(line: []const u8) ?ParseResult {
+    // Handles both:
+    //   "Connection closed by <IP> port <PORT>"
+    //   "Connection closed by authenticating user <USER> <IP> port <PORT> [preauth]"
+    //   "Connection reset by <IP> port <PORT>"
     const by_pos = indexOf(line, " by ") orelse return null;
-    const rest = line[by_pos + 4 ..];
+    var rest = line[by_pos + 4 ..];
+    var username: []const u8 = "";
+
+    // Handle "authenticating user <USER> " prefix
+    if (std.mem.startsWith(u8, rest, "authenticating user ")) {
+        rest = rest["authenticating user ".len..];
+        // "USER IP port PORT" — find " port " and extract user+IP from before it
+        const port_pos = indexOf(rest, " port ") orelse return null;
+        const user_ip = rest[0..port_pos];
+        const last_space = std.mem.lastIndexOfScalar(u8, user_ip, ' ') orelse return null;
+        username = user_ip[0..last_space];
+        const after_port = rest[port_pos + 6 ..];
+        const port_end = indexOf(after_port, " ") orelse after_port.len;
+        return .{
+            .event_type = .auth_failure,
+            .username = username,
+            .ip = user_ip[last_space + 1 ..],
+            .port = after_port[0..port_end],
+            .pid = extractPid(line),
+        };
+    }
+
     const port_pos = indexOf(rest, " port ") orelse return null;
     const after_port = rest[port_pos + 6 ..];
     const port_end = indexOf(after_port, " ") orelse after_port.len;
     return .{
         .event_type = .disconnect,
-        .username = "",
+        .username = username,
         .ip = rest[0..port_pos],
         .port = after_port[0..port_end],
         .pid = extractPid(line),
@@ -84,8 +109,10 @@ fn parseConnectionClosed(line: []const u8) ?ParseResult {
 }
 
 fn extractPid(line: []const u8) ?u32 {
-    const bracket_open = indexOf(line, "sshd[") orelse return null;
-    const pid_start = bracket_open + 5;
+    // Match both "sshd[PID]" and "sshd-session[PID]"
+    const bracket_open = indexOf(line, "sshd-session[") orelse
+        (indexOf(line, "sshd[") orelse return null);
+    const pid_start = (indexOfFrom(line, bracket_open, "[") orelse return null) + 1;
     const bracket_close = indexOfFrom(line, pid_start, "]") orelse return null;
     return std.fmt.parseInt(u32, line[pid_start..bracket_close], 10) catch null;
 }
@@ -129,6 +156,20 @@ test "parse disconnected from user" {
 test "parse connection closed" {
     const r = parseLine("sshd[2222]: Connection closed by 10.0.0.1 port 12345").?;
     try std.testing.expectEqual(EventType.disconnect, r.event_type);
+}
+
+test "parse connection closed by authenticating user" {
+    const r = parseLine("sshd-session[862330]: Connection closed by authenticating user moldabekov ::1 port 46820 [preauth]").?;
+    try std.testing.expectEqual(EventType.auth_failure, r.event_type);
+    try std.testing.expectEqualStrings("moldabekov", r.username);
+    try std.testing.expectEqualStrings("::1", r.ip);
+    try std.testing.expectEqualStrings("46820", r.port.?);
+    try std.testing.expectEqual(@as(?u32, 862330), r.pid);
+}
+
+test "parse sshd-session pid" {
+    const r = parseLine("sshd-session[12345]: Accepted password for root from 10.0.0.1 port 22 ssh2").?;
+    try std.testing.expectEqual(@as(?u32, 12345), r.pid);
 }
 
 test "unrecognized returns null" {
