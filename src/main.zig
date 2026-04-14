@@ -38,7 +38,8 @@ fn setupSignals() void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     std.debug.print("ssh-notifier v{s} starting\n", .{VERSION});
@@ -94,8 +95,8 @@ pub fn main() !void {
     }
 
     std.debug.print("shutting down\n", .{});
-    if (log_thread) |t| t.join();
     detect_thread.join();
+    if (log_thread) |t| t.join();
     std.debug.print("ssh-notifier stopped\n", .{});
 }
 
@@ -108,23 +109,44 @@ fn runBackend(backend_type: backend_mod.BackendType, ctx: *backend_mod.Context) 
 
 fn loadConfig(allocator: std.mem.Allocator) !Config {
     var sys_config: ?Config = null;
+    var sys_content: ?[]const u8 = null;
     if (config_mod.loadFile(allocator, SYSTEM_CONFIG)) |content| {
-        defer allocator.free(content);
         sys_config = try config_mod.parse(allocator, content);
+        sys_content = content;
     } else |_| {}
 
-    const home = std.posix.getenv("HOME") orelse return sys_config orelse Config{};
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const user_path = std.fmt.bufPrint(&path_buf, "{s}/.config/ssh-notifier/config.toml", .{home}) catch
+    const home = std.posix.getenv("HOME") orelse {
+        if (sys_config) |*sc| sc.ownContent(sys_content.?);
         return sys_config orelse Config{};
+    };
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const user_path = std.fmt.bufPrint(&path_buf, "{s}/.config/ssh-notifier/config.toml", .{home}) catch {
+        if (sys_config) |*sc| sc.ownContent(sys_content.?);
+        return sys_config orelse Config{};
+    };
 
-    if (config_mod.loadFile(allocator, user_path)) |content| {
-        defer allocator.free(content);
-        const user_config = try config_mod.parse(allocator, content);
-        if (sys_config) |sys| return config_mod.mergeConfigs(sys, user_config);
-        return user_config;
+    if (config_mod.loadFile(allocator, user_path)) |user_content| {
+        const user_config = try config_mod.parse(allocator, user_content);
+        if (sys_config) |sys| {
+            var merged = config_mod.mergeConfigs(sys, user_config);
+            merged.allocator = allocator;
+            merged.ownContent(sys_content.?);
+            merged.ownContent(user_content);
+            // sys endpoints were replaced by merge if user had endpoints;
+            // free sys endpoints if they were superseded
+            if (user_config.endpoints.len > 0 and sys.endpoints.len > 0) {
+                allocator.free(sys.endpoints);
+            }
+            return merged;
+        }
+        var uc = user_config;
+        uc.ownContent(user_content);
+        return uc;
     } else |_| {}
 
+    if (sys_config) |*sc| {
+        sc.ownContent(sys_content.?);
+    }
     return sys_config orelse Config{};
 }
 

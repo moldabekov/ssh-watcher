@@ -30,13 +30,48 @@ pub fn writeEvent(file: std.fs.File, ev: *const SSHEvent) !void {
     var ip_buf: [46]u8 = undefined;
     const ip_str = ev.formatIP(&ip_buf) catch "unknown";
 
+    var escaped_user_buf: [256]u8 = undefined;
+    const escaped_user = jsonEscape(ev.usernameSlice(), &escaped_user_buf);
+
     var buf: [1024]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buf);
     try stream.writer().print(
         "{{\"timestamp\":{d},\"event_type\":\"{s}\",\"source_ip\":\"{s}\",\"source_port\":{d},\"username\":\"{s}\",\"pid\":{d},\"session_id\":{d}}}\n",
-        .{ ev.timestamp, ev.event_type.toString(), ip_str, ev.source_port, ev.usernameSlice(), ev.pid, ev.session_id },
+        .{ ev.timestamp, ev.event_type.toString(), ip_str, ev.source_port, escaped_user, ev.pid, ev.session_id },
     );
     try file.writeAll(stream.getWritten());
+}
+
+fn jsonEscape(input: []const u8, buf: []u8) []const u8 {
+    var i: usize = 0;
+    for (input) |c| {
+        switch (c) {
+            '"' => {
+                if (i + 2 > buf.len) break;
+                buf[i] = '\\';
+                buf[i + 1] = '"';
+                i += 2;
+            },
+            '\\' => {
+                if (i + 2 > buf.len) break;
+                buf[i] = '\\';
+                buf[i + 1] = '\\';
+                i += 2;
+            },
+            '\n' => {
+                if (i + 2 > buf.len) break;
+                buf[i] = '\\';
+                buf[i + 1] = 'n';
+                i += 2;
+            },
+            else => {
+                if (i >= buf.len) break;
+                buf[i] = c;
+                i += 1;
+            },
+        }
+    }
+    return buf[0..i];
 }
 
 test "writeEvent JSON format" {

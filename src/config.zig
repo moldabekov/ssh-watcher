@@ -62,11 +62,26 @@ pub const Config = struct {
     endpoints: []WebhookEndpoint = &.{},
 
     allocator: ?std.mem.Allocator = null,
+    /// Raw content buffers whose memory backs string slices in this Config.
+    /// Stored here so they are freed when the Config is freed.
+    _owned_bufs: [2]?[]const u8 = .{ null, null },
+
+    pub fn ownContent(self: *Config, buf: []const u8) void {
+        if (self._owned_bufs[0] == null) {
+            self._owned_bufs[0] = buf;
+        } else {
+            self._owned_bufs[1] = buf;
+        }
+    }
 
     pub fn deinit(self: *Config) void {
         if (self.allocator) |alloc| {
-            if (self.endpoints.len > 0) {
-                alloc.free(self.endpoints);
+            if (self.endpoints.len > 0) alloc.free(self.endpoints);
+            for (&self._owned_bufs) |*b| {
+                if (b.*) |buf| {
+                    alloc.free(buf);
+                    b.* = null;
+                }
             }
         }
     }
