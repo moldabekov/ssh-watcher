@@ -26,12 +26,12 @@ const EventType = enum {
 ```
 
 - `session_id` ties related events together across their lifecycle.
-- The daemon maintains a bounded in-memory session table to correlate events, evicting stale entries.
+- The daemon maintains an in-memory session table (max 4096 entries, LRU eviction) to correlate events. Entries also expire after 2x `auth_timeout_seconds` if no new activity is seen.
 - Detection backends emit everything. Filtering happens after, based on user config.
 
 ## Detection Backends
 
-The daemon probes available backends at startup and activates the best one. Priority order:
+The daemon probes available backends at startup. In `auto` mode, it activates the highest-priority backend available. Only one primary backend runs at a time (utmp can optionally run as a supplementary source alongside the primary backend if explicitly configured via `backend = "ebpf+utmp"` or similar). Priority order:
 
 ### 1. eBPF (preferred)
 
@@ -59,7 +59,7 @@ A BPF program (single C source file with three tracepoint attachments), compiled
 
 - Polls `utmp` for session records.
 - Only produces `auth_success` and `disconnect` (no failed attempts).
-- Supplementary or last-resort source.
+- Last-resort primary source, or supplementary alongside another backend when explicitly configured.
 
 ### Backend selection
 
@@ -86,7 +86,7 @@ If a sink falls behind and the buffer wraps, it skips to the current position an
 ### Desktop Notifications
 
 - Attempts native D-Bus call to `org.freedesktop.Notifications.Notify` on the user's session bus.
-- Discovers active graphical sessions via `/run/user/<uid>/bus` and `sd_login_enumerate_sessions` (or `loginctl list-sessions`).
+- Discovers active graphical sessions via `sd_login_enumerate_sessions` on systemd systems, or by scanning `/run/user/*/bus` and checking for `DISPLAY`/`WAYLAND_DISPLAY` in `/proc/<pid>/environ` of session leaders on non-systemd systems.
 - Sends notifications to all active graphical sessions (multi-user support).
 - Falls back to spawning `notify-send` as the target user via `setuid`/`setgid` + `DBUS_SESSION_BUS_ADDRESS`.
 - Configurable urgency level per event type and notification templates.
@@ -122,8 +122,10 @@ notify_on_disconnect = false
 
 [desktop]
 enabled = true
-urgency_success = "normal"       # "low", "normal", "critical"
+urgency_connection = "low"       # "low", "normal", "critical"
+urgency_success = "normal"
 urgency_failure = "critical"
+urgency_disconnect = "low"
 title_template = "SSH {event_type}"
 body_template = "{username}@{source_ip}:{source_port}"
 
@@ -229,7 +231,11 @@ Build process:
 
 Dependencies:
 - libbpf — statically linked via Zig's C interop (`@cImport`)
-- Everything else (TOML parsing, D-Bus wire protocol, HTTP client, JSON serialization) implemented in Zig
+- TOML parsing — use an existing Zig package (e.g. `zig-toml`) as a build dependency
+- HTTP client — Zig's `std.http.Client`
+- JSON serialization — Zig's `std.json`
+- D-Bus wire protocol — minimal hand-rolled implementation (just `org.freedesktop.Notifications.Notify` method call)
+- sd_notify — raw socket write to `$NOTIFY_SOCKET`, no libsystemd dependency
 
 ## Error Handling & Observability
 
