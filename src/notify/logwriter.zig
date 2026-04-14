@@ -21,7 +21,7 @@ fn runImpl(ctx: *sink.SinkContext) !void {
                 continue;
             };
         } else {
-            std.time.sleep(50 * std.time.ns_per_ms);
+            std.Thread.sleep(50 * std.time.ns_per_ms);
         }
     }
 }
