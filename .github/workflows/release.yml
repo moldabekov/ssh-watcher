@@ -30,7 +30,10 @@ jobs:
             meson ninja-build pkg-config \
             python3-jinja2 gperf \
             libmount-dev libcap-dev \
-            zlib1g-dev
+            zlib1g-dev linux-tools-common bpftool
+
+      - name: Generate vmlinux.h
+        run: bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 
       - name: Install Zig
         run: |
@@ -73,7 +76,8 @@ jobs:
             --prefix="$SYSROOT" \
             --disable-debuginfod --disable-libdebuginfod \
             --disable-demangler --disable-nls \
-            --without-lzma --without-bzlib --without-zstd
+            --without-lzma --without-bzlib --without-zstd \
+            ac_cv_lib_argp_argp_parse=yes
           make -j"$(nproc)" -C lib
           make -j"$(nproc)" -C libelf
           make -C libelf install
@@ -157,7 +161,10 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm libsystemd-dev libbpf-dev
+          sudo apt-get install -y clang llvm libsystemd-dev libbpf-dev linux-tools-common bpftool
+
+      - name: Generate vmlinux.h
+        run: bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 
       - name: Install Zig
         run: |
