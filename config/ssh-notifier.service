@@ -1,0 +1,21 @@
+[Unit]
+Description=SSH Connection Notifier
+After=network.target sshd.service
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/ssh-notifier
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/ssh-notifier.log
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
