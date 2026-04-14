@@ -57,7 +57,7 @@ pub const Connection = struct {
         p += writeStr(&buf, p, summary);
         p += writeStr(&buf, p, body);
         p += writeU32(&buf, p, 0); // empty actions array
-        p = writeHints(&buf, p, urgency);
+        p += writeHints(&buf, p, urgency);
         p += writeI32(&buf, p, -1);
 
         try self.methodCall(
@@ -181,7 +181,7 @@ fn writeHints(buf: []u8, pos: usize, urgency: u8) usize {
     // Array length = content bytes only (excluding alignment padding after length field)
     const array_len: u32 = @intCast(p - content_start);
     @memcpy(buf[pos .. pos + 4], std.mem.asBytes(&array_len));
-    return p;
+    return p - pos;
 }
 
 fn align4(v: usize) usize {

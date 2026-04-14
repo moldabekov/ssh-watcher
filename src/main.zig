@@ -109,27 +109,45 @@ pub fn main() !void {
     // Session correlation table for auth_failure inference
     var sessions = session_mod.SessionTable.init(allocator, 4096);
     defer sessions.deinit();
-    const timeout_ns: u64 = @as(u64, config.auth_timeout_seconds) * std.time.ns_per_s;
+    var timeout_ns: u64 = @as(u64, config.auth_timeout_seconds) * std.time.ns_per_s;
+
+    // Main loop consumer — feeds session table from ring buffer events
+    var session_consumer = ring.consumer();
 
     std.debug.print("ssh-notifier running\n", .{});
     sdNotify("READY=1\n");
 
     // Main loop
     while (!should_stop.load(.acquire)) {
-        // Config live-reload on SIGHUP
+        // Config live-reload on SIGHUP — only reload scalar values,
+        // string pointers in sinks are NOT updated (they still point to old config)
         if (should_reload.load(.acquire)) {
             should_reload.store(false, .release);
             if (loadConfig(allocator)) |new_cfg| {
-                config.deinit();
-                config = new_cfg;
-                std.debug.print("config reloaded\n", .{});
+                // Only update scalar config values that don't involve string pointers
+                // held by other threads. Full reload would require thread synchronization.
+                config.auth_timeout_seconds = new_cfg.auth_timeout_seconds;
+                config.notify_on_connection = new_cfg.notify_on_connection;
+                config.notify_on_auth_success = new_cfg.notify_on_auth_success;
+                config.notify_on_auth_failure = new_cfg.notify_on_auth_failure;
+                config.notify_on_disconnect = new_cfg.notify_on_disconnect;
+                timeout_ns = @as(u64, new_cfg.auth_timeout_seconds) * std.time.ns_per_s;
+                // Free the new config's owned buffers (we didn't take its strings)
+                var tmp = new_cfg;
+                tmp.deinit();
+                std.debug.print("config reloaded (scalar values)\n", .{});
             } else |err| {
                 std.debug.print("config reload failed: {}, keeping current\n", .{err});
             }
         }
 
+        // Feed session table from ring buffer events
+        while (session_consumer.pop()) |ev| {
+            sessions.update(&ev);
+        }
+
         // Session timeout check — infer auth_failure for connections with no exec
-        const now: u64 = @intCast(@as(u128, @bitCast(std.time.nanoTimestamp())));
+        const now: u64 = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
         var timeout_events: [32]SSHEvent = undefined;
         const n = sessions.checkTimeouts(now, timeout_ns, &timeout_events);
         for (timeout_events[0..n]) |ev| ring.push(ev);

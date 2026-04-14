@@ -43,6 +43,22 @@ fn runImpl(ctx: *Context) !void {
     };
     defer c.bpf_object__close(obj);
 
+    // Override target_port from config before loading
+    const rodata = c.bpf_object__find_map_by_name(obj, ".rodata");
+    if (rodata) |rd| {
+        // The .rodata section contains the volatile const target_port (u16 at offset 0)
+        var initial_size: usize = 0;
+        const initial_ptr = c.bpf_map__initial_value(rd, &initial_size);
+        if (initial_ptr != null and initial_size >= 2) {
+            const port: u16 = ctx.config.ssh_port;
+            const port_bytes = std.mem.asBytes(&port);
+            const dest: [*]u8 = @ptrCast(initial_ptr);
+            dest[0] = port_bytes[0];
+            dest[1] = port_bytes[1];
+            std.log.info("ebpf: set target_port={d} in BPF rodata", .{port});
+        }
+    }
+
     if (c.bpf_object__load(obj) != 0) {
         std.log.err("ebpf: failed to load BPF programs (kernel BTF or privileges?)", .{});
         return error.Unexpected;

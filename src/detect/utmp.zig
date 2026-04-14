@@ -44,7 +44,7 @@ fn scan(known: *std.AutoHashMap(u32, void), ctx: *Context, initial: bool) void {
             known.put(pid, {}) catch continue;
             if (!initial) {
                 var ev = SSHEvent{};
-                ev.timestamp = @intCast(@as(u128, @bitCast(std.time.nanoTimestamp())));
+                ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
                 ev.event_type = .auth_success;
                 ev.pid = pid;
                 ev.session_id = pid;
@@ -63,7 +63,7 @@ fn scan(known: *std.AutoHashMap(u32, void), ctx: *Context, initial: bool) void {
         if (!current.contains(e.key_ptr.*)) {
             if (!initial) {
                 var ev = SSHEvent{};
-                ev.timestamp = @intCast(@as(u128, @bitCast(std.time.nanoTimestamp())));
+                ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
                 ev.event_type = .disconnect;
                 ev.pid = e.key_ptr.*;
                 ev.session_id = e.key_ptr.*;
