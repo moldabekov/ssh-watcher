@@ -14,6 +14,15 @@ pub const EventType = enum(u8) {
             .disconnect => "disconnect",
         };
     }
+
+    pub fn toDisplayName(self: EventType) []const u8 {
+        return switch (self) {
+            .connection => "Connection",
+            .auth_success => "Authentication Successful",
+            .auth_failure => "Authentication Failed",
+            .disconnect => "Connection Disconnected",
+        };
+    }
 };
 
 pub const SSHEvent = struct {

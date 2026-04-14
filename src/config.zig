@@ -52,7 +52,7 @@ pub const Config = struct {
     urgency_success: Urgency = .normal,
     urgency_failure: Urgency = .critical,
     urgency_disconnect: Urgency = .low,
-    title_template: []const u8 = "SSH {event_type}",
+    title_template: []const u8 = "SSH: {event_type}",
     body_template: []const u8 = "{username}@{source_ip}:{source_port}",
 
     log_enabled: bool = false,

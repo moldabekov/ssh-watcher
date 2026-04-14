@@ -100,7 +100,7 @@ fn notifySendFallback(title: []const u8, body: []const u8, urgency: u8, target_u
     const xdg_arg = std.fmt.bufPrint(&xdg_env, "XDG_RUNTIME_DIR=/run/user/{s}", .{uid_name}) catch return;
 
     var child = std.process.Child.init(
-        &.{ "env", bus_arg, xdg_arg, "notify-send", "-u", u_str, title, body },
+        &.{ "env", bus_arg, xdg_arg, "notify-send", "-a", "ssh-notifier", "-u", u_str, title, body },
         std.heap.page_allocator,
     );
     child.stderr_behavior = .Ignore;

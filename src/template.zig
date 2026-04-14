@@ -38,7 +38,7 @@ fn findVarEnd(s: []const u8, start: usize) ?usize {
 
 fn writeVar(writer: anytype, name: []const u8, ev: *const SSHEvent) !void {
     if (std.mem.eql(u8, name, "event_type")) {
-        try writer.writeAll(ev.event_type.toString());
+        try writer.writeAll(ev.event_type.toDisplayName());
     } else if (std.mem.eql(u8, name, "username")) {
         try writer.writeAll(ev.usernameSlice());
     } else if (std.mem.eql(u8, name, "source_ip")) {
@@ -136,8 +136,8 @@ test "expand event_type" {
     var ev = SSHEvent{};
     ev.event_type = .auth_failure;
     var buf: [256]u8 = undefined;
-    const result = try expand("SSH {event_type}", &ev, &buf);
-    try std.testing.expectEqualStrings("SSH auth_failure", result);
+    const result = try expand("SSH: {event_type}", &ev, &buf);
+    try std.testing.expectEqualStrings("SSH: Authentication Failed", result);
 }
 
 test "expand literal text" {
