@@ -5,20 +5,20 @@ A Linux daemon that monitors incoming SSH connections and alerts you through des
 ## Features
 
 - **4 detection backends** with automatic selection:
-  - **eBPF** (preferred) — kernel tracepoints, zero sshd configuration, lowest overhead
-  - **systemd journal** — parses sshd log entries in real time
-  - **log file tailing** — inotify-based watching of `/var/log/secure` or `/var/log/auth.log`
-  - **utmp** — polls login session records
+  - **eBPF** (preferred) – kernel tracepoints, zero sshd configuration, lowest overhead
+  - **systemd journal** – parses sshd log entries in real time
+  - **log file tailing** – inotify-based watching of `/var/log/secure` or `/var/log/auth.log`
+  - **utmp** – polls login session records
 - **3 notification sinks**, each in its own thread:
   - **Desktop notifications** via D-Bus with fork+setuid for root-to-user delivery
-  - **JSON log file** — one event per line, includes detection backend, `jq`-friendly
-  - **Webhooks** — HTTP POST to Slack, Discord, Telegram, or any endpoint with retry
-- **Human-readable notification titles** — "SSH: Authentication Successful", "SSH: Connection Disconnected"
-- **Layered TOML config** — system-wide defaults + per-user overrides
-- **Configurable events** — choose which events to notify on (connection, auth success/failure, disconnect)
-- **Configurable urgency** — set notification urgency per event type
-- **Notification templates** — customize title and body with `{event_type}`, `{username}`, `{source_ip}`, etc.
-- **Systemd integration** — `sd_notify` readiness, `SIGHUP` config reload, `SIGUSR1` status dump
+  - **JSON log file** – one event per line, includes detection backend, `jq`-friendly
+  - **Webhooks** – HTTP POST to Slack, Discord, Telegram, or any endpoint with retry
+- **Human-readable notification titles** – "SSH: Authentication Successful", "SSH: Connection Disconnected"
+- **Layered TOML config** – system-wide defaults + per-user overrides
+- **Configurable events** – choose which events to notify on (connection, auth success/failure, disconnect)
+- **Configurable urgency** – set notification urgency per event type
+- **Notification templates** – customize title and body with `{event_type}`, `{username}`, `{source_ip}`, etc.
+- **Systemd integration** – `sd_notify` readiness, `SIGHUP` config reload, `SIGUSR1` status dump
 
 ## Download
 
@@ -26,7 +26,7 @@ Pre-built binaries from [GitHub Releases](https://github.com/moldabekov/ssh-watc
 
 | Binary | Linking | Runtime deps |
 |--------|---------|-------------|
-| `ssh-notifier-x86_64-linux-static` | Fully static (musl) | None — runs on any Linux |
+| `ssh-notifier-x86_64-linux-static` | Fully static (musl) | None – runs on any Linux |
 | `ssh-notifier-x86_64-linux` | Dynamic (glibc) | libsystemd, libbpf |
 
 ## Requirements
@@ -37,7 +37,7 @@ Pre-built binaries from [GitHub Releases](https://github.com/moldabekov/ssh-watc
 - clang (for BPF compilation)
 - libbpf-devel
 - systemd-devel (or elogind-dev on musl systems)
-- bpftool (for generating `vmlinux.h`, optional — pre-compiled BPF object included)
+- bpftool (for generating `vmlinux.h`, optional – pre-compiled BPF object included)
 
 ### Runtime
 
@@ -48,7 +48,7 @@ Pre-built binaries from [GitHub Releases](https://github.com/moldabekov/ssh-watc
 ## Building
 
 ```bash
-# Generate BTF header (one time, optional — pre-compiled .bpf.o is included)
+# Generate BTF header (one time, optional – pre-compiled .bpf.o is included)
 bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 
 # Dev build
@@ -180,9 +180,9 @@ Single-binary monolith. One detection backend writes `SSHEvent` structs into a b
 
 The daemon runs as root but delivers notifications to user desktop sessions:
 
-1. **Same UID** — D-Bus direct connection (daemon running as user)
-2. **Cross UID** — fork + setuid to target user, then D-Bus (daemon running as root)
-3. **Fallback** — `notify-send` with privilege drop (only if fork fails)
+1. **Same UID** – D-Bus direct connection (daemon running as user)
+2. **Cross UID** – fork + setuid to target user, then D-Bus (daemon running as root)
+3. **Fallback** – `notify-send` with privilege drop (only if fork fails)
 
 dbus-broker on modern Fedora/systemd rejects cross-UID D-Bus connections, so the fork+setuid approach is necessary when running as root.
 
@@ -190,11 +190,11 @@ dbus-broker on modern Fedora/systemd rejects cross-UID D-Bus connections, so the
 
 Three BPF tracepoints compiled with CO-RE (Compile Once, Run Everywhere):
 
-- `tp/sock/inet_sock_set_state` — TCP connection established on SSH port
-- `tp/sched/sched_process_exec` — user shell spawned under sshd (auth success)
-- `tp/sched/sched_process_exit` — sshd session process exit (disconnect)
+- `tp/sock/inet_sock_set_state` – TCP connection established on SSH port
+- `tp/sched/sched_process_exec` – user shell spawned under sshd (auth success)
+- `tp/sched/sched_process_exit` – sshd session process exit (disconnect)
 
-The BPF ELF object is embedded in the binary via `@embedFile` — no external file needed at runtime.
+The BPF ELF object is embedded in the binary via `@embedFile` – no external file needed at runtime.
 
 ### Journal / logfile backends
 
@@ -271,4 +271,4 @@ ssh-notifier/
 
 ## License
 
-TBD
+MIT
