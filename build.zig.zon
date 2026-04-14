@@ -1,0 +1,12 @@
+.{
+    .name = .ssh_notifier,
+    .version = "0.1.0",
+    .fingerprint = 0x63de6856e8893bc9,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

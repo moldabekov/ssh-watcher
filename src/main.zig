@@ -1,0 +1,10 @@
+const std = @import("std");
+pub const event = @import("event.zig");
+
+pub fn main() !void {
+    std.debug.print("ssh-notifier v0.1.0\n", .{});
+}
+
+test {
+    _ = event;
+}
