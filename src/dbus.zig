@@ -87,6 +87,15 @@ pub const Connection = struct {
         fp += writeField(&fields, fp, 6, 's', dest);
         if (sig.len > 0) fp += writeFieldSig(&fields, fp, sig);
 
+        // D-Bus array length must exclude trailing alignment padding of the last
+        // element. writeFieldSig doesn't pad, so fp is already tight when sig is
+        // present. For string fields (dest is last), subtract writeStr's trailing pad.
+        const fields_len: u32 = blk: {
+            if (sig.len > 0) break :blk @intCast(fp);
+            const raw = 4 + dest.len + 1;
+            break :blk @intCast(fp - (align4(raw) - raw));
+        };
+
         var hdr: [16]u8 = undefined;
         hdr[0] = 'l';
         hdr[1] = 1;
@@ -96,14 +105,13 @@ pub const Connection = struct {
         const serial = self.serial;
         self.serial += 1;
         @memcpy(hdr[8..12], std.mem.asBytes(&serial));
-        @memcpy(hdr[12..16], std.mem.asBytes(&@as(u32, @intCast(fp))));
+        @memcpy(hdr[12..16], std.mem.asBytes(&fields_len));
 
-        // Fixed header is 16 bytes, then fp bytes of field data. Body starts at 8-byte alignment.
-        const pad_len = align8(16 + fp) - (16 + fp);
+        const pad_len = align8(16 + fields_len) - (16 + fields_len);
         const zeros = [_]u8{0} ** 8;
 
         _ = try self.stream.write(&hdr);
-        _ = try self.stream.write(fields[0..fp]);
+        _ = try self.stream.write(fields[0..fields_len]);
         if (pad_len > 0) _ = try self.stream.write(zeros[0..pad_len]);
         if (body_bytes.len > 0) _ = try self.stream.write(body_bytes);
     }
