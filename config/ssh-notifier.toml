@@ -3,24 +3,24 @@
 # Per-user:    ~/.config/ssh-notifier/config.toml
 
 [detection]
-backend = "auto"
+backend = "journal"
 ssh_port = 22
 auth_timeout_seconds = 30
 
 [events]
-notify_on_connection = false
+notify_on_connection = true
 notify_on_auth_success = true
 notify_on_auth_failure = true
-notify_on_disconnect = false
+notify_on_disconnect = true
 
 [desktop]
 enabled = true
 urgency_connection = "low"
-urgency_success = "normal"
-urgency_failure = "critical"
+urgency_success = "critical"
+urgency_failure = "normal"
 urgency_disconnect = "low"
-title_template = "SSH {event_type}"
-body_template = "{username}@{source_ip}:{source_port}"
+title_template = "SSH: {event_type}"
+body_template = "{username}@{source_ip}"
 
 [log]
 enabled = false
