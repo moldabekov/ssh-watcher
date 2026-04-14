@@ -34,20 +34,18 @@ fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
     };
     defer dir.close();
     var iter = dir.iterate();
-    var sent = false;
+
+    // Try D-Bus direct for each user — stop after first success
     while (iter.next() catch null) |entry| {
         if (entry.kind != .directory) continue;
         const uid = std.fmt.parseInt(std.posix.uid_t, entry.name, 10) catch continue;
         var addr_buf: [256]u8 = undefined;
         const addr = std.fmt.bufPrint(&addr_buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
-        // Pass target UID so D-Bus authenticates as that user, not as root
-        if (sendViaDbus(addr, uid, title, body, urgency)) {
-            sent = true;
-        } else {
-            notifySendFallback(title, body, urgency, uid);
-        }
+        if (sendViaDbus(addr, uid, title, body, urgency)) return;
     }
-    if (!sent) notifySendFallback(title, body, urgency, null);
+
+    // D-Bus failed for all users — try notify-send as last resort
+    notifySendFallback(title, body, urgency, null);
 }
 
 fn sendViaDbus(addr: []const u8, uid: std.posix.uid_t, title: []const u8, body: []const u8, urgency: u8) bool {
@@ -60,37 +58,20 @@ fn sendViaDbus(addr: []const u8, uid: std.posix.uid_t, title: []const u8, body: 
 fn notifySendFallback(title: []const u8, body: []const u8, urgency: u8, target_uid: ?std.posix.uid_t) void {
     const u_str: []const u8 = if (urgency == 0) "low" else if (urgency == 2) "critical" else "normal";
 
-    // Build env vars for the target user's D-Bus session
-    var dbus_addr_buf: [256]u8 = undefined;
-    var xdg_buf: [128]u8 = undefined;
-    var env_dbus: []const u8 = undefined;
-    var env_xdg: []const u8 = undefined;
+    var child = std.process.Child.init(
+        &.{ "notify-send", "-u", u_str, title, body },
+        std.heap.page_allocator,
+    );
+    // Suppress stderr — notify-send prints D-Bus errors we can't control
+    child.stderr_behavior = .Ignore;
 
     if (target_uid) |uid| {
-        env_dbus = std.fmt.bufPrint(&dbus_addr_buf, "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{d}/bus", .{uid}) catch "";
-        env_xdg = std.fmt.bufPrint(&xdg_buf, "XDG_RUNTIME_DIR=/run/user/{d}", .{uid}) catch "";
+        child.uid = uid;
+        child.gid = uid;
     }
 
-    // Use /usr/bin/env to set environment then run notify-send
-    if (target_uid != null and env_dbus.len > 0) {
-        var child = std.process.Child.init(
-            &.{ "/usr/bin/env", env_dbus, env_xdg, "notify-send", "-u", u_str, title, body },
-            std.heap.page_allocator,
-        );
-        if (target_uid) |uid| {
-            child.uid = uid;
-            child.gid = uid;
-        }
-        child.spawn() catch return;
-        _ = child.wait() catch {};
-    } else {
-        var child = std.process.Child.init(
-            &.{ "notify-send", "-u", u_str, title, body },
-            std.heap.page_allocator,
-        );
-        child.spawn() catch return;
-        _ = child.wait() catch {};
-    }
+    child.spawn() catch return;
+    _ = child.wait() catch {};
 }
 
 fn urgencyByte(config: *const Config, et: EventType) u8 {

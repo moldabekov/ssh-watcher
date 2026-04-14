@@ -28,10 +28,23 @@ const MAX_SEEN = 256;
 var global_ctx: ?*Context = null;
 
 /// Track session_ids that already emitted auth_success to deduplicate.
-/// sshd spawns multiple non-sshd children per login (PAM, motd, shell) —
-/// we only want to report the first auth_success per session.
 var seen_auth: [MAX_SEEN]u64 = [_]u64{0} ** MAX_SEEN;
 var seen_count: usize = 0;
+
+/// Cache recent connection events so auth_success/disconnect can be enriched
+/// with the client IP/port (which only the connection tracepoint sees).
+const MAX_CONNS = 64;
+const ConnInfo = struct {
+    source_ip: [16]u8,
+    source_port: u16,
+    timestamp: u64,
+};
+var recent_conns: [MAX_CONNS]ConnInfo = [_]ConnInfo{.{
+    .source_ip = [_]u8{0} ** 16,
+    .source_port = 0,
+    .timestamp = 0,
+}} ** MAX_CONNS;
+var conn_count: usize = 0;
 
 /// Embedded BPF ELF object — compiled at build time by clang.
 const bpf_elf = @embedFile("ssh_monitor.bpf.o");
@@ -179,6 +192,41 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
     ev.source_ip[13] = bpf_ev.source_ip4[1];
     ev.source_ip[14] = bpf_ev.source_ip4[2];
     ev.source_ip[15] = bpf_ev.source_ip4[3];
+
+    // Connection events: cache IP/port for enriching later events
+    if (ev.event_type == .connection) {
+        if (conn_count < MAX_CONNS) {
+            recent_conns[conn_count] = .{
+                .source_ip = ev.source_ip,
+                .source_port = ev.source_port,
+                .timestamp = ev.timestamp,
+            };
+            conn_count += 1;
+        }
+    }
+
+    // Auth/disconnect events: enrich with most recent connection's IP/port
+    // (eBPF exec/exit tracepoints don't have socket context)
+    if ((ev.event_type == .auth_success or ev.event_type == .disconnect) and
+        ev.source_ip[12] == 0 and ev.source_ip[13] == 0 and
+        ev.source_ip[14] == 0 and ev.source_ip[15] == 0)
+    {
+        if (conn_count > 0) {
+            const latest = &recent_conns[conn_count - 1];
+            ev.source_ip = latest.source_ip;
+            ev.source_port = latest.source_port;
+        }
+    }
+
+    // Skip priv-sep noise: auth_success/disconnect with UID 0 where
+    // a non-root auth_success exists for the same connection.
+    // This filters sshd internal processes for non-root logins while
+    // still allowing real root SSH logins through.
+    if (bpf_ev.uid == 0 and (ev.event_type == .auth_success or ev.event_type == .disconnect)) {
+        // Check if username is "sshd" — always noise
+        if (std.mem.startsWith(u8, ev.usernameSlice(), "sshd")) return 0;
+        // For root auth_success, let the dedup handle it (first one per session wins)
+    }
 
     ctx.emit(ev);
     return 0;
