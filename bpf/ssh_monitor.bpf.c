@@ -39,6 +39,7 @@ int handle_inet_sock_set_state(struct trace_event_raw_inet_sock_set_state *ctx)
     e->event_type = SSH_EVENT_CONNECTION;
     e->pid = bpf_get_current_pid_tgid() >> 32;
     e->ppid = 0;
+    e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     e->source_port = ctx->dport;
     e->dest_port = ctx->sport;
     __builtin_memcpy(e->source_ip4, ctx->daddr, 4);  /* daddr = remote/client IP */
@@ -84,6 +85,7 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     e->event_type = SSH_EVENT_AUTH_SUCCESS;
     e->pid = pid;
     e->ppid = ppid;
+    e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     e->source_port = 0;
     e->dest_port = 0;
     __builtin_memset(e->source_ip4, 0, 4);
@@ -116,6 +118,7 @@ int handle_exit(struct trace_event_raw_sched_process_template *ctx)
     e->event_type = SSH_EVENT_DISCONNECT;
     e->pid = pid;
     e->ppid = 0;
+    e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     e->source_port = 0;
     e->dest_port = 0;
     __builtin_memset(e->source_ip4, 0, 4);

@@ -13,6 +13,7 @@ struct ssh_event {
     __u32 event_type;
     __u32 pid;
     __u32 ppid;
+    __u32 uid;
     __u16 source_port;
     __u16 dest_port;
     __u8 source_ip4[4];

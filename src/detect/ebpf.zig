@@ -6,6 +6,7 @@ const Context = @import("backend.zig").Context;
 const c = @cImport({
     @cInclude("bpf/libbpf.h");
     @cInclude("bpf/bpf.h");
+    @cInclude("pwd.h");
 });
 
 /// Must match struct ssh_event in bpf/ssh_monitor.h (no packed attribute).
@@ -14,6 +15,7 @@ const BpfEvent = extern struct {
     event_type: u32,
     pid: u32,
     ppid: u32,
+    uid: u32,
     source_port: u16,
     dest_port: u16,
     source_ip4: [4]u8,
@@ -128,10 +130,17 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
         else => return 0,
     };
     ev.pid = bpf_ev.pid;
-    // For session correlation: connection events use their own PID,
-    // exec/exit events use ppid (the sshd parent) to link back to the connection.
     ev.session_id = if (bpf_ev.ppid != 0) bpf_ev.ppid else bpf_ev.pid;
     ev.source_port = bpf_ev.source_port;
+
+    // Resolve UID to username via getpwuid
+    if (bpf_ev.uid != 0 or ev.event_type == .auth_success) {
+        const pw = c.getpwuid(bpf_ev.uid);
+        if (pw != null) {
+            const name = std.mem.sliceTo(pw.*.pw_name, 0);
+            ev.setUsername(name);
+        }
+    }
 
     // Map IPv4 bytes into IPv4-mapped-IPv6 format
     ev.source_ip = [_]u8{0} ** 16;
