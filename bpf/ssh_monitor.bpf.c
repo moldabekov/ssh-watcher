@@ -70,7 +70,9 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     if (!is_sshd_comm(parent_comm))
         return 0;
 
-    /* If we ourselves are also sshd, this is just sshd forking — skip */
+    /* If we ourselves are also sshd, this is sshd's internal forking
+       (privilege separation, etc.) — not a user login. The real user
+       shell will have a non-sshd comm (bash, zsh, sh, etc.) */
     if (is_sshd_comm(comm))
         return 0;
 

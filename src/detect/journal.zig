@@ -16,12 +16,13 @@ pub fn run(ctx: *Context) void {
 
 fn runImpl(ctx: *Context) !void {
     var journal: ?*c.sd_journal = null;
-    if (c.sd_journal_open(&journal, c.SD_JOURNAL_LOCAL_ONLY | c.SD_JOURNAL_SYSTEM) < 0)
+    if (c.sd_journal_open(&journal, c.SD_JOURNAL_LOCAL_ONLY) < 0)
         return error.Unexpected;
-    defer _ = c.sd_journal_close(journal);
+    defer c.sd_journal_close(journal);
 
-    // Filter to sshd service — _SYSTEMD_UNIT is more reliable than SYSLOG_IDENTIFIER
-    if (c.sd_journal_add_match(journal, "_SYSTEMD_UNIT=sshd.service", 26) < 0)
+    // Filter by _COMM=sshd-session to catch both the main sshd.service
+    // and per-session scopes (session-N.scope) which carry disconnect messages
+    if (c.sd_journal_add_match(journal, "_COMM=sshd-session", 18) < 0)
         return error.Unexpected;
 
     // Seek to tail — only process new messages
@@ -30,32 +31,43 @@ fn runImpl(ctx: *Context) !void {
     _ = c.sd_journal_previous(journal);
 
     while (!ctx.stopped()) {
-        const wait_rc = c.sd_journal_wait(journal, 1000 * 1000); // 1 second timeout in microseconds
+        const wait_rc = c.sd_journal_wait(journal, 1000 * 1000);
         if (wait_rc < 0) continue;
         if (wait_rc == c.SD_JOURNAL_NOP) continue;
 
         while (c.sd_journal_next(journal) > 0) {
-            var data: [*c]const u8 = undefined;
-            var len: usize = 0;
+            var msg_data: [*c]const u8 = undefined;
+            var msg_len: usize = 0;
+            if (c.sd_journal_get_data(journal, "MESSAGE", @ptrCast(&msg_data), &msg_len) < 0) continue;
 
-            if (c.sd_journal_get_data(journal, "MESSAGE", @ptrCast(&data), &len) < 0) continue;
+            // Extract PID from _PID journal field
+            var pid_data: [*c]const u8 = undefined;
+            var pid_len: usize = 0;
+            var pid: u32 = 0;
+            if (c.sd_journal_get_data(journal, "_PID", @ptrCast(&pid_data), &pid_len) >= 0) {
+                const pid_full = pid_data[0..pid_len];
+                if (std.mem.indexOf(u8, pid_full, "=")) |eq| {
+                    pid = std.fmt.parseInt(u32, pid_full[eq + 1 ..], 10) catch 0;
+                }
+            }
 
-            // data is "MESSAGE=<actual message>"
-            const full = data[0..len];
-            if (std.mem.indexOf(u8, full, "=")) |eq_pos| {
-                processMessage(ctx, full[eq_pos + 1 ..]);
+            // MESSAGE=<actual message>
+            const msg_full = msg_data[0..msg_len];
+            if (std.mem.indexOf(u8, msg_full, "=")) |eq_pos| {
+                processMessage(ctx, msg_full[eq_pos + 1 ..], pid);
             }
         }
     }
 }
 
-fn processMessage(ctx: *Context, msg: []const u8) void {
+fn processMessage(ctx: *Context, msg: []const u8, journal_pid: u32) void {
     const result = patterns.parseLine(msg) orelse return;
     var ev = SSHEvent{};
     ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
     ev.event_type = result.event_type;
     ev.setUsername(result.username);
-    if (result.pid) |pid| ev.pid = pid;
+    // Prefer PID from journal field; fall back to parsing from message
+    ev.pid = if (journal_pid != 0) journal_pid else (result.pid orelse 0);
     if (result.port) |ps| ev.source_port = std.fmt.parseInt(u16, ps, 10) catch 0;
     logfile.parseIPInto(result.ip, &ev.source_ip);
     ev.session_id = ev.pid;

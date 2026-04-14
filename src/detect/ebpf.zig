@@ -23,8 +23,15 @@ const BpfEvent = extern struct {
 };
 
 const MAX_LINKS = 8;
+const MAX_SEEN = 256;
 
 var global_ctx: ?*Context = null;
+
+/// Track session_ids that already emitted auth_success to deduplicate.
+/// sshd spawns multiple non-sshd children per login (PAM, motd, shell) —
+/// we only want to report the first auth_success per session.
+var seen_auth: [MAX_SEEN]u64 = [_]u64{0} ** MAX_SEEN;
+var seen_count: usize = 0;
 
 /// Embedded BPF ELF object — compiled at build time by clang.
 const bpf_elf = @embedFile("ssh_monitor.bpf.o");
@@ -132,6 +139,28 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
     ev.pid = bpf_ev.pid;
     ev.session_id = if (bpf_ev.ppid != 0) bpf_ev.ppid else bpf_ev.pid;
     ev.source_port = bpf_ev.source_port;
+
+    // Deduplicate auth_success per session_id — sshd spawns multiple
+    // children per login (PAM, motd, shell), only report the first one
+    if (ev.event_type == .auth_success) {
+        for (seen_auth[0..seen_count]) |sid| {
+            if (sid == ev.session_id) return 0;
+        }
+        if (seen_count < MAX_SEEN) {
+            seen_auth[seen_count] = ev.session_id;
+            seen_count += 1;
+        }
+    }
+    // On disconnect, clear the session from the seen set
+    if (ev.event_type == .disconnect) {
+        for (seen_auth[0..seen_count], 0..) |sid, i| {
+            if (sid == ev.session_id) {
+                seen_auth[i] = seen_auth[seen_count - 1];
+                seen_count -= 1;
+                break;
+            }
+        }
+    }
 
     // Resolve UID to username via getpwuid
     if (bpf_ev.uid != 0 or ev.event_type == .auth_success) {
