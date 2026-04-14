@@ -92,7 +92,8 @@ pub const Connection = struct {
         @memcpy(hdr[8..12], std.mem.asBytes(&serial));
         @memcpy(hdr[12..16], std.mem.asBytes(&@as(u32, @intCast(fp))));
 
-        const pad_len = align8(12 + fp) - (12 + fp);
+        // Fixed header is 16 bytes, then fp bytes of field data. Body starts at 8-byte alignment.
+        const pad_len = align8(16 + fp) - (16 + fp);
         const zeros = [_]u8{0} ** 8;
 
         _ = try self.stream.write(&hdr);
@@ -104,17 +105,17 @@ pub const Connection = struct {
 
 fn writeField(buf: []u8, pos: usize, code: u8, sig_char: u8, value: []const u8) usize {
     var p = align8(pos);
-    @memset(buf[pos..p], 0);
+    @memset(buf[pos..p], 0); // struct alignment padding
     buf[p] = code;
     p += 1;
-    buf[p] = 1;
+    buf[p] = 1; // variant signature length
     p += 1;
     buf[p] = sig_char;
     p += 1;
-    buf[p] = 0;
+    buf[p] = 0; // signature null terminator
     p += 1;
-    p = align4(p);
-    @memset(buf[pos..p], 0);
+    // p is now at struct_start + 4, which is always 4-aligned (struct starts at 8-aligned)
+    // so no additional padding needed before the string value
     p += writeStr(buf, p, value);
     return p - pos;
 }
@@ -160,19 +161,26 @@ fn writeI32(buf: []u8, pos: usize, val: i32) usize {
 
 fn writeHints(buf: []u8, pos: usize, urgency: u8) usize {
     var p = pos;
-    const dict_start = p + 4;
-    p = align8(dict_start);
-    @memset(buf[dict_start..p], 0);
+    // Array length field (4 bytes, filled at the end)
+    p += 4;
+    // Pad to 8-byte alignment for dict entry (D-Bus spec: {sv} entries are 8-aligned)
+    const content_start = align8(p);
+    @memset(buf[p..content_start], 0);
+    p = content_start;
+    // Dict entry: string key "urgency"
     p += writeStr(buf, p, "urgency");
-    buf[p] = 1;
+    // Dict entry: variant value — signature "y" (byte) + value
+    buf[p] = 1; // signature length
     p += 1;
-    buf[p] = 'y';
+    buf[p] = 'y'; // byte type
     p += 1;
-    buf[p] = 0;
+    buf[p] = 0; // signature null
     p += 1;
     buf[p] = urgency;
     p += 1;
-    @memcpy(buf[pos .. pos + 4], std.mem.asBytes(&@as(u32, @intCast(p - dict_start))));
+    // Array length = content bytes only (excluding alignment padding after length field)
+    const array_len: u32 = @intCast(p - content_start);
+    @memcpy(buf[pos .. pos + 4], std.mem.asBytes(&array_len));
     return p;
 }
 

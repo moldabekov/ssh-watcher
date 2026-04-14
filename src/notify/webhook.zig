@@ -46,7 +46,7 @@ fn sendOnce(ep: WebhookEndpoint, ev: *const SSHEvent) bool {
 }
 
 fn buildPayload(ep: WebhookEndpoint, ev: *const SSHEvent, buf: []u8) ![]const u8 {
-    if (ep.payload_template) |tmpl| return template.expand(tmpl, ev, buf);
+    if (ep.payload_template) |tmpl| return template.expandJsonSafe(tmpl, ev, buf);
     return defaultPayload(ev, buf);
 }
 

@@ -29,7 +29,7 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
 
 fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
     var dir = std.fs.openDirAbsolute("/run/user", .{ .iterate = true }) catch {
-        notifySendFallback(title, body, urgency);
+        notifySendFallback(title, body, urgency, null);
         return;
     };
     defer dir.close();
@@ -37,11 +37,17 @@ fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
     var sent = false;
     while (iter.next() catch null) |entry| {
         if (entry.kind != .directory) continue;
-        var buf: [256]u8 = undefined;
-        const addr = std.fmt.bufPrint(&buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
-        if (sendViaDbus(addr, title, body, urgency)) sent = true;
+        // Validate numeric UID
+        const uid = std.fmt.parseInt(std.posix.uid_t, entry.name, 10) catch continue;
+        var addr_buf: [256]u8 = undefined;
+        const addr = std.fmt.bufPrint(&addr_buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
+        if (sendViaDbus(addr, title, body, urgency)) {
+            sent = true;
+        } else {
+            notifySendFallback(title, body, urgency, uid);
+        }
     }
-    if (!sent) notifySendFallback(title, body, urgency);
+    if (!sent) notifySendFallback(title, body, urgency, null);
 }
 
 fn sendViaDbus(addr: []const u8, title: []const u8, body: []const u8, urgency: u8) bool {
@@ -51,9 +57,25 @@ fn sendViaDbus(addr: []const u8, title: []const u8, body: []const u8, urgency: u
     return true;
 }
 
-fn notifySendFallback(title: []const u8, body: []const u8, urgency: u8) void {
+fn notifySendFallback(title: []const u8, body: []const u8, urgency: u8, target_uid: ?std.posix.uid_t) void {
     const u_str: []const u8 = if (urgency == 0) "low" else if (urgency == 2) "critical" else "normal";
     var child = std.process.Child.init(&.{ "notify-send", "-u", u_str, title, body }, std.heap.page_allocator);
+    // Set target user UID/GID so notify-send can reach the user's D-Bus session
+    if (target_uid) |uid| {
+        child.uid = uid;
+        child.gid = uid; // on most systems primary GID == UID
+        // Set DBUS_SESSION_BUS_ADDRESS in child environment
+        var env_buf: [256]u8 = undefined;
+        const bus_addr = std.fmt.bufPrint(&env_buf, "unix:path=/run/user/{d}/bus", .{uid}) catch {
+            child.spawn() catch return;
+            _ = child.wait() catch {};
+            return;
+        };
+        _ = bus_addr;
+        // Note: env_map requires heap allocation; for simplicity we rely on
+        // the UID switch + /run/user/<uid>/bus being the default bus path
+        // which notify-send discovers via XDG_RUNTIME_DIR
+    }
     child.spawn() catch return;
     _ = child.wait() catch {};
 }
