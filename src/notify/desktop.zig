@@ -53,8 +53,7 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
 }
 
 fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
-    const linux = std.os.linux;
-    const our_uid = linux.getuid();
+    const our_uid = std.os.linux.getuid();
     var dir = std.fs.openDirAbsolute("/run/user", .{ .iterate = true }) catch return;
     defer dir.close();
     var iter = dir.iterate();
@@ -62,28 +61,55 @@ fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
     while (iter.next() catch null) |entry| {
         if (entry.kind != .directory) continue;
         const uid = std.fmt.parseInt(std.posix.uid_t, entry.name, 10) catch continue;
-        var bus_buf: [256]u8 = undefined;
-        _ = std.fmt.bufPrint(&bus_buf, "/run/user/{s}/bus", .{entry.name}) catch continue;
+        var addr_buf: [256]u8 = undefined;
+        const addr = std.fmt.bufPrint(&addr_buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
 
-        // D-Bus direct works only same-UID (dbus-broker rejects cross-UID).
-        // When running as root, always use notify-send with privilege drop.
         if (our_uid == uid) {
-            var addr_buf: [256]u8 = undefined;
-            const addr = std.fmt.bufPrint(&addr_buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
-            if (sendViaDbus(addr, title, body, urgency)) return;
+            if (sendViaDbus(addr, title, body, urgency)) {
+                std.debug.print("desktop: sent via dbus-direct (uid={d})\n", .{uid});
+                return;
+            }
+        } else {
+            if (sendViaDbusFork(addr, uid, title, body, urgency)) {
+                std.debug.print("desktop: sent via dbus-fork (uid={d})\n", .{uid});
+                return;
+            }
+            std.debug.print("desktop: fork failed, falling back to notify-send (uid={d})\n", .{uid});
+            notifySendFallback(title, body, urgency, uid, entry.name);
+            return;
         }
-
-        // notify-send as the target user — works cross-UID via setuid
-        notifySendFallback(title, body, urgency, uid, entry.name);
-        return;
     }
 }
 
+/// D-Bus direct — works when process UID matches the bus owner.
 fn sendViaDbus(addr: []const u8, title: []const u8, body: []const u8, urgency: u8) bool {
     var conn = dbus.Connection.connect(addr) catch return false;
     defer conn.close();
     conn.notify(title, body, urgency) catch return false;
     return true;
+}
+
+/// Fork a child, drop to target UID, send via D-Bus as that user.
+/// Safe after fork: dbus.Connection uses only stack buffers and syscalls.
+fn sendViaDbusFork(addr: []const u8, target_uid: std.posix.uid_t, title: []const u8, body: []const u8, urgency: u8) bool {
+    const pid = std.posix.fork() catch return false;
+    if (pid == 0) {
+        // Child — drop privileges, send notification, exit.
+        // Syscalls return negative on error when cast to isize.
+        if (@as(isize, @bitCast(std.os.linux.setgid(target_uid))) < 0) std.posix.exit(1);
+        if (@as(isize, @bitCast(std.os.linux.setuid(target_uid))) < 0) std.posix.exit(1);
+        var conn = dbus.Connection.connect(addr) catch std.posix.exit(1);
+        conn.notify(title, body, urgency) catch {
+            conn.close();
+            std.posix.exit(1);
+        };
+        conn.close();
+        std.posix.exit(0);
+    }
+    // Parent — wait for child, check exit status
+    const res = std.posix.waitpid(pid, 0);
+    // WIFEXITED && WEXITSTATUS == 0
+    return (res.status & 0x7f) == 0 and (res.status >> 8) == 0;
 }
 
 fn notifySendFallback(title: []const u8, body: []const u8, urgency: u8, target_uid: std.posix.uid_t, uid_name: []const u8) void {
