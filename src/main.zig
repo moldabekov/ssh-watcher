@@ -13,4 +13,6 @@ test {
     _ = @import("detect/patterns.zig");
     _ = @import("detect/backend.zig");
     _ = @import("detect/logfile.zig");
+    _ = @import("notify/sink.zig");
+    _ = @import("notify/logwriter.zig");
 }
