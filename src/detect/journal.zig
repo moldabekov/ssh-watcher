@@ -1,0 +1,63 @@
+const std = @import("std");
+const SSHEvent = @import("../event.zig").SSHEvent;
+const Context = @import("backend.zig").Context;
+const patterns = @import("patterns.zig");
+const logfile = @import("logfile.zig");
+
+const c = @cImport({
+    @cInclude("systemd/sd-journal.h");
+});
+
+pub fn run(ctx: *Context) void {
+    runImpl(ctx) catch |err| {
+        std.log.err("journal backend: {}", .{err});
+    };
+}
+
+fn runImpl(ctx: *Context) !void {
+    var journal: ?*c.sd_journal = null;
+    if (c.sd_journal_open(&journal, c.SD_JOURNAL_LOCAL_ONLY | c.SD_JOURNAL_SYSTEM) < 0)
+        return error.Unexpected;
+    defer _ = c.sd_journal_close(journal);
+
+    // Filter to sshd
+    if (c.sd_journal_add_match(journal, "SYSLOG_IDENTIFIER=sshd", 22) < 0)
+        return error.Unexpected;
+
+    // Seek to tail — only process new messages
+    if (c.sd_journal_seek_tail(journal) < 0)
+        return error.Unexpected;
+    _ = c.sd_journal_previous(journal);
+
+    while (!ctx.stopped()) {
+        const wait_rc = c.sd_journal_wait(journal, 1000 * 1000); // 1 second timeout in microseconds
+        if (wait_rc < 0) continue;
+        if (wait_rc == c.SD_JOURNAL_NOP) continue;
+
+        while (c.sd_journal_next(journal) > 0) {
+            var data: [*c]const u8 = undefined;
+            var len: usize = 0;
+
+            if (c.sd_journal_get_data(journal, "MESSAGE", @ptrCast(&data), &len) < 0) continue;
+
+            // data is "MESSAGE=<actual message>"
+            const full = data[0..len];
+            if (std.mem.indexOf(u8, full, "=")) |eq_pos| {
+                processMessage(ctx, full[eq_pos + 1 ..]);
+            }
+        }
+    }
+}
+
+fn processMessage(ctx: *Context, msg: []const u8) void {
+    const result = patterns.parseLine(msg) orelse return;
+    var ev = SSHEvent{};
+    ev.timestamp = @intCast(@as(u128, @bitCast(std.time.nanoTimestamp())));
+    ev.event_type = result.event_type;
+    ev.setUsername(result.username);
+    if (result.pid) |pid| ev.pid = pid;
+    if (result.port) |ps| ev.source_port = std.fmt.parseInt(u16, ps, 10) catch 0;
+    logfile.parseIPInto(result.ip, &ev.source_ip);
+    ev.session_id = ev.pid;
+    ctx.emit(ev);
+}

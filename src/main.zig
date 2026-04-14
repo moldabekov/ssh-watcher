@@ -9,6 +9,7 @@ const config_mod = @import("config.zig");
 const Config = config_mod.Config;
 const backend_mod = @import("detect/backend.zig");
 const logfile = @import("detect/logfile.zig");
+const journal = @import("detect/journal.zig");
 const logwriter = @import("notify/logwriter.zig");
 const desktop = @import("notify/desktop.zig");
 const webhook = @import("notify/webhook.zig");
@@ -131,6 +132,7 @@ pub fn main() !void {
 fn runBackend(backend_type: backend_mod.BackendType, ctx: *backend_mod.Context) void {
     switch (backend_type) {
         .logfile => logfile.run(ctx),
+        .journal => journal.run(ctx),
         else => std.log.err("backend {s} not yet implemented", .{@tagName(backend_type)}),
     }
 }
@@ -186,6 +188,7 @@ test {
     _ = @import("detect/patterns.zig");
     _ = @import("detect/backend.zig");
     _ = @import("detect/logfile.zig");
+    _ = @import("detect/journal.zig");
     _ = @import("notify/sink.zig");
     _ = @import("notify/logwriter.zig");
     _ = @import("dbus.zig");

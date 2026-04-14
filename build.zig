@@ -12,6 +12,11 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    // Link system libraries for C interop (journal, libbpf)
+    exe.root_module.linkSystemLibrary("libsystemd", .{});
+    exe.root_module.linkSystemLibrary("bpf", .{});
+    exe.root_module.link_libc = true;
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
