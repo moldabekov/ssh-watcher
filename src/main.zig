@@ -11,6 +11,7 @@ const backend_mod = @import("detect/backend.zig");
 const logfile = @import("detect/logfile.zig");
 const logwriter = @import("notify/logwriter.zig");
 const desktop = @import("notify/desktop.zig");
+const webhook = @import("notify/webhook.zig");
 const sink_mod = @import("notify/sink.zig");
 
 const VERSION = "0.1.0";
@@ -97,6 +98,18 @@ pub fn main() !void {
         std.debug.print("desktop sink: enabled\n", .{});
     }
 
+    var webhook_ctx: ?sink_mod.SinkContext = null;
+    var webhook_thread: ?std.Thread = null;
+    if (config.webhook_enabled and config.endpoints.len > 0) {
+        webhook_ctx = .{
+            .consumer = ring.consumer(),
+            .config = &config,
+            .should_stop = &should_stop,
+        };
+        webhook_thread = try std.Thread.spawn(.{}, webhook.run, .{&webhook_ctx.?});
+        std.debug.print("webhook sink: {d} endpoints\n", .{config.endpoints.len});
+    }
+
     std.debug.print("ssh-notifier running\n", .{});
 
     while (!should_stop.load(.acquire)) {
@@ -109,6 +122,7 @@ pub fn main() !void {
 
     std.debug.print("shutting down\n", .{});
     detect_thread.join();
+    if (webhook_thread) |t| t.join();
     if (desktop_thread) |t| t.join();
     if (log_thread) |t| t.join();
     std.debug.print("ssh-notifier stopped\n", .{});
@@ -176,4 +190,5 @@ test {
     _ = @import("notify/logwriter.zig");
     _ = @import("dbus.zig");
     _ = @import("notify/desktop.zig");
+    _ = @import("notify/webhook.zig");
 }
