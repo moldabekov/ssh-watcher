@@ -10,4 +10,7 @@ test {
     _ = @import("ring_buffer.zig");
     _ = @import("config.zig");
     _ = @import("template.zig");
+    _ = @import("detect/patterns.zig");
+    _ = @import("detect/backend.zig");
+    _ = @import("detect/logfile.zig");
 }
