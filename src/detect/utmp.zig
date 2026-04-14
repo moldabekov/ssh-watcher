@@ -17,10 +17,13 @@ const Utmp = extern struct {
     ut_host: [256]u8,
     ut_exit: extern struct { e_termination: i16, e_exit: i16 },
     ut_session: i32,
-    _pad1: [4]u8 = undefined,
     ut_tv: extern struct { tv_sec: i32, tv_usec: i32 },
     ut_addr_v6: [4]u32,
     _unused: [20]u8,
+
+    comptime {
+        if (@sizeOf(Utmp) != 384) @compileError("Utmp size mismatch");
+    }
 };
 
 pub fn run(ctx: *Context) void {
@@ -59,7 +62,7 @@ fn scan(known: *std.AutoHashMap(u32, void), ctx: *Context, initial: bool) void {
         if (!known.contains(pid)) {
             known.put(pid, {}) catch continue;
             if (!initial) {
-                var ev = SSHEvent{};
+                var ev = SSHEvent{ .backend = .utmp };
                 ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
                 ev.event_type = .auth_success;
                 ev.pid = pid;
@@ -78,7 +81,7 @@ fn scan(known: *std.AutoHashMap(u32, void), ctx: *Context, initial: bool) void {
     while (iter.next()) |e| {
         if (!current.contains(e.key_ptr.*)) {
             if (!initial) {
-                var ev = SSHEvent{};
+                var ev = SSHEvent{ .backend = .utmp };
                 ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
                 ev.event_type = .disconnect;
                 ev.pid = e.key_ptr.*;

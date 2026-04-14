@@ -36,8 +36,8 @@ pub fn writeEvent(file: std.fs.File, ev: *const SSHEvent) !void {
     var buf: [1024]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buf);
     try stream.writer().print(
-        "{{\"timestamp\":{d},\"event_type\":\"{s}\",\"source_ip\":\"{s}\",\"source_port\":{d},\"username\":\"{s}\",\"pid\":{d},\"session_id\":{d}}}\n",
-        .{ ev.timestamp, ev.event_type.toString(), ip_str, ev.source_port, escaped_user, ev.pid, ev.session_id },
+        "{{\"timestamp\":{d},\"event_type\":\"{s}\",\"source_ip\":\"{s}\",\"source_port\":{d},\"username\":\"{s}\",\"pid\":{d},\"session_id\":{d},\"backend\":\"{s}\"}}\n",
+        .{ ev.timestamp, ev.event_type.toString(), ip_str, ev.source_port, escaped_user, ev.pid, ev.session_id, ev.backend.toString() },
     );
     try file.writeAll(stream.getWritten());
 }
@@ -98,5 +98,6 @@ test "writeEvent JSON format" {
     const out = read_buf[0..n];
     try std.testing.expect(std.mem.indexOf(u8, out, "\"event_type\":\"auth_success\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"username\":\"root\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"backend\":\"journal\"") != null);
     try std.testing.expectEqual(@as(u8, '\n'), out[out.len - 1]);
 }

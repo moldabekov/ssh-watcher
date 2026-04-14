@@ -53,32 +53,29 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
 }
 
 fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
+    const linux = std.os.linux;
+    const our_uid = linux.getuid();
     var dir = std.fs.openDirAbsolute("/run/user", .{ .iterate = true }) catch return;
     defer dir.close();
     var iter = dir.iterate();
 
-    // Remember first user for notify-send fallback
-    var first_uid: ?std.posix.uid_t = null;
-    var first_name_buf: [32]u8 = undefined;
-    var first_name_len: usize = 0;
-
-    // Try D-Bus direct for each user — stop after first success
     while (iter.next() catch null) |entry| {
         if (entry.kind != .directory) continue;
         const uid = std.fmt.parseInt(std.posix.uid_t, entry.name, 10) catch continue;
-        if (first_uid == null) {
-            first_uid = uid;
-            first_name_len = @min(entry.name.len, first_name_buf.len);
-            @memcpy(first_name_buf[0..first_name_len], entry.name[0..first_name_len]);
-        }
-        var addr_buf: [256]u8 = undefined;
-        const addr = std.fmt.bufPrint(&addr_buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
-        if (sendViaDbus(addr, title, body, urgency)) return;
-    }
+        var bus_buf: [256]u8 = undefined;
+        _ = std.fmt.bufPrint(&bus_buf, "/run/user/{s}/bus", .{entry.name}) catch continue;
 
-    // D-Bus failed for all users — try notify-send with user env vars
-    if (first_uid) |uid| {
-        notifySendFallback(title, body, urgency, uid, first_name_buf[0..first_name_len]);
+        // D-Bus direct works only same-UID (dbus-broker rejects cross-UID).
+        // When running as root, always use notify-send with privilege drop.
+        if (our_uid == uid) {
+            var addr_buf: [256]u8 = undefined;
+            const addr = std.fmt.bufPrint(&addr_buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
+            if (sendViaDbus(addr, title, body, urgency)) return;
+        }
+
+        // notify-send as the target user — works cross-UID via setuid
+        notifySendFallback(title, body, urgency, uid, entry.name);
+        return;
     }
 }
 

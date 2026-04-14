@@ -25,6 +25,22 @@ pub const EventType = enum(u8) {
     }
 };
 
+pub const Backend = enum(u8) {
+    ebpf = 0,
+    journal = 1,
+    logfile = 2,
+    utmp = 3,
+
+    pub fn toString(self: Backend) []const u8 {
+        return switch (self) {
+            .ebpf => "ebpf",
+            .journal => "journal",
+            .logfile => "logfile",
+            .utmp => "utmp",
+        };
+    }
+};
+
 pub const SSHEvent = struct {
     timestamp: u64 = 0,
     event_type: EventType = .connection,
@@ -33,6 +49,7 @@ pub const SSHEvent = struct {
     username: [64]u8 = [_]u8{0} ** 64,
     pid: u32 = 0,
     session_id: u64 = 0,
+    backend: Backend = .journal,
 
     pub fn setIPv4(self: *SSHEvent, a: u8, b: u8, c_byte: u8, d: u8) void {
         self.source_ip = [_]u8{0} ** 16;

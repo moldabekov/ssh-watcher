@@ -62,7 +62,7 @@ fn runImpl(ctx: *Context) !void {
 
 fn processMessage(ctx: *Context, msg: []const u8, journal_pid: u32) void {
     const result = patterns.parseLine(msg) orelse return;
-    var ev = SSHEvent{};
+    var ev = SSHEvent{ .backend = .journal };
     ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
     ev.event_type = result.event_type;
     ev.setUsername(result.username);

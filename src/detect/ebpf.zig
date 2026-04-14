@@ -140,7 +140,7 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
     const bpf_ev: *const BpfEvent = @ptrCast(@alignCast(data orelse return 0));
     const ctx = global_ctx orelse return 0;
 
-    var ev = SSHEvent{};
+    var ev = SSHEvent{ .backend = .ebpf };
     ev.timestamp = bpf_ev.timestamp;
     ev.event_type = switch (bpf_ev.event_type) {
         0 => EventType.connection,

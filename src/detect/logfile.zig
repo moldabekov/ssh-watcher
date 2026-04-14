@@ -64,7 +64,7 @@ fn runImpl(ctx: *Context) !void {
 
 fn processLine(ctx: *Context, line: []const u8) void {
     const result = patterns.parseLine(line) orelse return;
-    var ev = SSHEvent{};
+    var ev = SSHEvent{ .backend = .logfile };
     ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
     ev.event_type = result.event_type;
     ev.setUsername(result.username);
