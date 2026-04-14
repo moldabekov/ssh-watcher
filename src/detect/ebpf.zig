@@ -8,7 +8,7 @@ const c = @cImport({
     @cInclude("bpf/bpf.h");
 });
 
-/// Must match struct ssh_event in bpf/ssh_monitor.h exactly.
+/// Must match struct ssh_event in bpf/ssh_monitor.h (no packed attribute).
 const BpfEvent = extern struct {
     timestamp: u64,
     event_type: u32,
@@ -20,7 +20,12 @@ const BpfEvent = extern struct {
     comm: [16]u8,
 };
 
+const MAX_LINKS = 8;
+
 var global_ctx: ?*Context = null;
+
+/// Embedded BPF ELF object — compiled at build time by clang.
+const bpf_elf = @embedFile("ssh_monitor.bpf.o");
 
 pub fn run(ctx: *Context) void {
     runImpl(ctx) catch |err| {
@@ -32,18 +37,26 @@ fn runImpl(ctx: *Context) !void {
     global_ctx = ctx;
     defer global_ctx = null;
 
-    const obj = c.bpf_object__open("zig-out/bpf/ssh_monitor.bpf.o") orelse {
-        std.log.err("ebpf: failed to open BPF object at zig-out/bpf/ssh_monitor.bpf.o", .{});
+    const obj = c.bpf_object__open_mem(bpf_elf.ptr, bpf_elf.len, null) orelse {
+        std.log.err("ebpf: failed to open BPF object from embedded data", .{});
         return error.Unexpected;
     };
     defer c.bpf_object__close(obj);
 
     if (c.bpf_object__load(obj) != 0) {
-        std.log.err("ebpf: failed to load BPF programs", .{});
+        std.log.err("ebpf: failed to load BPF programs (kernel BTF or privileges?)", .{});
         return error.Unexpected;
     }
 
-    // Attach all BPF programs
+    // Attach all BPF programs, storing links for cleanup
+    var links: [MAX_LINKS]?*c.bpf_link = .{null} ** MAX_LINKS;
+    var link_count: usize = 0;
+    defer {
+        for (links[0..link_count]) |maybe_link| {
+            if (maybe_link) |link| _ = c.bpf_link__destroy(link);
+        }
+    }
+
     var prog: ?*c.bpf_program = null;
     while (true) {
         prog = c.bpf_object__next_program(obj, prog);
@@ -54,6 +67,10 @@ fn runImpl(ctx: *Context) !void {
             const name_str = if (name_ptr != null) std.mem.sliceTo(name_ptr, 0) else "unknown";
             std.log.err("ebpf: failed to attach program {s}", .{name_str});
             return error.Unexpected;
+        }
+        if (link_count < MAX_LINKS) {
+            links[link_count] = link;
+            link_count += 1;
         }
     }
 
@@ -71,10 +88,13 @@ fn runImpl(ctx: *Context) !void {
     };
     defer c.ring_buffer__free(rb);
 
-    std.log.info("ebpf: attached, listening on port {d}", .{ctx.config.ssh_port});
+    std.log.info("ebpf: attached {d} programs, listening on port {d}", .{ link_count, ctx.config.ssh_port });
 
     while (!ctx.stopped()) {
-        _ = c.ring_buffer__poll(rb, 100);
+        const ret = c.ring_buffer__poll(rb, 100);
+        if (ret < 0 and ret != -4) { // -4 = EINTR, ignore
+            std.log.err("ebpf: ring_buffer__poll error: {d}", .{ret});
+        }
     }
 }
 
@@ -92,7 +112,9 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
         else => return 0,
     };
     ev.pid = bpf_ev.pid;
-    ev.session_id = bpf_ev.pid;
+    // For session correlation: connection events use their own PID,
+    // exec/exit events use ppid (the sshd parent) to link back to the connection.
+    ev.session_id = if (bpf_ev.ppid != 0) bpf_ev.ppid else bpf_ev.pid;
     ev.source_port = bpf_ev.source_port;
 
     // Map IPv4 bytes into IPv4-mapped-IPv6 format

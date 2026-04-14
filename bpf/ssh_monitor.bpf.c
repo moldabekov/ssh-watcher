@@ -41,7 +41,7 @@ int handle_inet_sock_set_state(struct trace_event_raw_inet_sock_set_state *ctx)
     e->ppid = 0;
     e->source_port = ctx->dport;  /* client's port */
     e->dest_port = ctx->sport;    /* our port (ssh) */
-    __builtin_memcpy(e->source_ip4, ctx->saddr, 4);
+    __builtin_memcpy(e->source_ip4, ctx->daddr, 4);  /* daddr = remote/client IP */
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
     /* Track this sshd PID for exec/exit correlation */

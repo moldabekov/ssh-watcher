@@ -3,3 +3,4 @@ zig-cache/
 .zig-cache/
 bpf/vmlinux.h
 bpf/*.bpf.o
+src/detect/*.bpf.o

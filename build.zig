@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.linkSystemLibrary("bpf", .{});
     exe.root_module.link_libc = true;
 
-    // BPF compilation step
+    // BPF compilation step — output inside src/ for @embedFile access
     const bpf_compile = b.addSystemCommand(&.{
         "clang",
         "-target",
@@ -25,15 +25,14 @@ pub fn build(b: *std.Build) void {
         "-D__TARGET_ARCH_x86_64",
         "-O2",
         "-g",
-        "-c",
-        "bpf/ssh_monitor.bpf.c",
         "-I",
         "bpf",
+        "-c",
+        "bpf/ssh_monitor.bpf.c",
         "-o",
+        "src/detect/ssh_monitor.bpf.o",
     });
-    const bpf_obj = bpf_compile.addOutputFileArg("ssh_monitor.bpf.o");
-    const install_bpf = b.addInstallFile(bpf_obj, "bpf/ssh_monitor.bpf.o");
-    exe.step.dependOn(&install_bpf.step);
+    exe.step.dependOn(&bpf_compile.step);
 
     b.installArtifact(exe);
 

@@ -17,6 +17,6 @@ struct ssh_event {
     __u16 dest_port;
     __u8 source_ip4[4];
     __u8 comm[16];
-} __attribute__((packed));
+};
 
 #endif

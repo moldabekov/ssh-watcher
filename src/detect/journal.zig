@@ -20,8 +20,8 @@ fn runImpl(ctx: *Context) !void {
         return error.Unexpected;
     defer _ = c.sd_journal_close(journal);
 
-    // Filter to sshd
-    if (c.sd_journal_add_match(journal, "SYSLOG_IDENTIFIER=sshd", 22) < 0)
+    // Filter to sshd service — _SYSTEMD_UNIT is more reliable than SYSLOG_IDENTIFIER
+    if (c.sd_journal_add_match(journal, "_SYSTEMD_UNIT=sshd.service", 26) < 0)
         return error.Unexpected;
 
     // Seek to tail — only process new messages
