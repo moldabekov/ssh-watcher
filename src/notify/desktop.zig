@@ -24,19 +24,20 @@ pub fn run(ctx: *sink.SinkContext) void {
     }
 }
 
-/// Check if any user has a reachable notification daemon.
+/// Check if any user has a D-Bus session bus socket.
+/// We don't try authenticating (dbus-broker may reject cross-UID auth),
+/// just verify the socket file exists — notify-send fallback with UID
+/// switch can still deliver even if our D-Bus direct path fails.
 fn probeNotifications() bool {
     var dir = std.fs.openDirAbsolute("/run/user", .{ .iterate = true }) catch return false;
     defer dir.close();
     var iter = dir.iterate();
     while (iter.next() catch null) |entry| {
         if (entry.kind != .directory) continue;
-        const uid = std.fmt.parseInt(std.posix.uid_t, entry.name, 10) catch continue;
-        var buf: [256]u8 = undefined;
-        const addr = std.fmt.bufPrint(&buf, "unix:path=/run/user/{s}/bus", .{entry.name}) catch continue;
-        // Try a full D-Bus connect + Hello — if it works, notifications can be delivered
-        var conn = dbus.Connection.connect(addr, uid) catch continue;
-        conn.close();
+        _ = std.fmt.parseInt(std.posix.uid_t, entry.name, 10) catch continue;
+        var path_buf: [256]u8 = undefined;
+        const bus_path = std.fmt.bufPrint(&path_buf, "/run/user/{s}/bus", .{entry.name}) catch continue;
+        std.fs.accessAbsolute(bus_path, .{}) catch continue;
         return true;
     }
     return false;
