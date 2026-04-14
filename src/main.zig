@@ -9,4 +9,5 @@ test {
     _ = event;
     _ = @import("ring_buffer.zig");
     _ = @import("config.zig");
+    _ = @import("template.zig");
 }
