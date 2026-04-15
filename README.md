@@ -27,12 +27,14 @@ A Linux daemon that monitors incoming SSH connections and alerts you through des
 
 ## Download
 
-Pre-built binaries from [GitHub Releases](https://github.com/moldabekov/ssh-watcher/releases):
+Pre-built binaries and packages from [GitHub Releases](https://github.com/moldabekov/ssh-watcher/releases):
 
-| Binary | Linking | Runtime deps |
-|--------|---------|-------------|
-| `ssh-watcher-x86_64-linux-static` | Fully static (musl) | None – runs on any Linux |
-| `ssh-watcher-x86_64-linux` | Dynamic (glibc) | libsystemd, libbpf |
+| Asset | Type | Runtime deps |
+|-------|------|-------------|
+| `ssh-watcher_VERSION_amd64.deb` | Debian/Ubuntu package | None (static) |
+| `ssh-watcher-VERSION-1.x86_64.rpm` | Fedora/RHEL package | None (static) |
+| `ssh-watcher-x86_64-linux-static` | Static binary (musl) | None |
+| `ssh-watcher-x86_64-linux` | Dynamic binary (glibc) | libsystemd, libbpf |
 
 ## Requirements
 
@@ -71,17 +73,23 @@ zig build release-static -Dmusl-sysroot=/path/to/sysroot
 
 ## Installation
 
+### From packages
+
 ```bash
-# Install binary
-sudo cp zig-out/bin/ssh-watcher /usr/bin/
+# Debian/Ubuntu
+sudo dpkg -i ssh-watcher_*_amd64.deb
+sudo systemctl enable --now ssh-watcher
 
-# Install config
-sudo mkdir -p /etc/ssh-watcher
-sudo cp config/ssh-watcher.toml /etc/ssh-watcher/config.toml
+# Fedora/RHEL
+sudo rpm -i ssh-watcher-*.x86_64.rpm
+sudo systemctl enable --now ssh-watcher
+```
 
-# Install systemd service
-sudo cp config/ssh-watcher.service /etc/systemd/system/
-sudo systemctl daemon-reload
+### From source
+
+```bash
+zig build
+sudo ./install.sh
 sudo systemctl enable --now ssh-watcher
 ```
 
@@ -272,9 +280,14 @@ ssh-watcher/
 │       ├── desktop.zig        # Desktop notifications (D-Bus + fork+setuid)
 │       ├── logwriter.zig      # JSON log writer
 │       └── webhook.zig        # Webhook POST with retry
-└── config/
-    ├── ssh-watcher.toml      # Example config
-    └── ssh-watcher.service   # Systemd unit
+├── config/
+│   ├── ssh-watcher.toml      # Example config
+│   └── ssh-watcher.service   # Systemd unit
+├── packaging/
+│   ├── postinstall.sh         # DEB/RPM post-install (systemctl daemon-reload)
+│   └── preremove.sh           # DEB/RPM pre-remove (stop + disable service)
+├── nfpm.yaml                  # DEB/RPM package definition
+└── install.sh                 # Install script for source builds
 ```
 
 ## License

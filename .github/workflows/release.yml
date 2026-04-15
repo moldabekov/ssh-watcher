@@ -187,9 +187,52 @@ jobs:
           name: ssh-watcher-x86_64-linux
           path: zig-out/release/ssh-watcher-x86_64-linux
 
+  package:
+    name: Build DEB/RPM packages
+    needs: [build-static]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ssh-watcher-x86_64-linux-static
+          path: .
+
+      - name: Install nfpm
+        run: |
+          curl -sfL https://github.com/goreleaser/nfpm/releases/latest/download/nfpm_amd64.deb -o nfpm.deb
+          sudo dpkg -i nfpm.deb
+
+      - name: Prepare binary
+        run: |
+          chmod +x ssh-watcher-x86_64-linux-static
+          cp ssh-watcher-x86_64-linux-static ssh-watcher
+
+      - name: Build packages
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          export VERSION
+          nfpm pkg --packager deb --target "ssh-watcher_${VERSION}_amd64.deb"
+          nfpm pkg --packager rpm --target "ssh-watcher-${VERSION}-1.x86_64.rpm"
+          ls -lh ssh-watcher*.{deb,rpm}
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-watcher-deb
+          path: ssh-watcher_*.deb
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-watcher-rpm
+          path: ssh-watcher-*.rpm
+
   release:
     name: Create release
-    needs: [build-static, build-dynamic]
+    needs: [build-static, build-dynamic, package]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -204,3 +247,5 @@ jobs:
           files: |
             artifacts/ssh-watcher-x86_64-linux-static/ssh-watcher-x86_64-linux-static
             artifacts/ssh-watcher-x86_64-linux/ssh-watcher-x86_64-linux
+            artifacts/ssh-watcher-deb/ssh-watcher_*.deb
+            artifacts/ssh-watcher-rpm/ssh-watcher-*.rpm
