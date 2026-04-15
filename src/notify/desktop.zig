@@ -7,6 +7,8 @@ const dbus = @import("../dbus.zig");
 const template = @import("../template.zig");
 const sink = @import("sink.zig");
 
+const c = @cImport({ @cInclude("pwd.h"); });
+
 pub fn run(ctx: *sink.SinkContext) void {
     // Probe once at startup — if no notification path works, disable silently
     if (!probeNotifications()) {
@@ -92,11 +94,19 @@ fn sendViaDbus(addr: []const u8, title: []const u8, body: []const u8, urgency: u
 /// Fork a child, drop to target UID, send via D-Bus as that user.
 /// Safe after fork: dbus.Connection uses only stack buffers and syscalls.
 fn sendViaDbusFork(addr: []const u8, target_uid: std.posix.uid_t, title: []const u8, body: []const u8, urgency: u8) bool {
+    // Resolve target user's actual GID before forking
+    const pw = c.getpwuid(target_uid);
+    const target_gid: std.posix.uid_t = if (pw != null) pw.*.pw_gid else target_uid;
+
     const pid = std.posix.fork() catch return false;
     if (pid == 0) {
-        // Child — drop privileges, send notification, exit.
-        // Syscalls return negative on error when cast to isize.
-        if (@as(isize, @bitCast(std.os.linux.setgid(target_uid))) < 0) std.posix.exit(1);
+        // Child — drop ALL privileges, send notification, exit.
+        // 1. Clear supplementary groups (inherited from root)
+        // 2. Set primary GID to target user's actual GID
+        // 3. Set UID to target user
+        const SYS = std.os.linux.SYS;
+        if (@as(isize, @bitCast(std.os.linux.syscall2(SYS.setgroups, 0, 0))) < 0) std.posix.exit(1);
+        if (@as(isize, @bitCast(std.os.linux.setgid(target_gid))) < 0) std.posix.exit(1);
         if (@as(isize, @bitCast(std.os.linux.setuid(target_uid))) < 0) std.posix.exit(1);
         var conn = dbus.Connection.connect(addr) catch std.posix.exit(1);
         conn.notify(title, body, urgency) catch {
@@ -128,7 +138,8 @@ fn notifySendFallback(title: []const u8, body: []const u8, urgency: u8, target_u
     );
     child.stderr_behavior = .Ignore;
     child.uid = target_uid;
-    child.gid = target_uid;
+    const fallback_pw = c.getpwuid(target_uid);
+    child.gid = if (fallback_pw != null) fallback_pw.*.pw_gid else target_uid;
 
     child.spawn() catch return;
     _ = child.wait() catch {};

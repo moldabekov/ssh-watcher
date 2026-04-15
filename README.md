@@ -31,8 +31,10 @@ Pre-built binaries and packages from [GitHub Releases](https://github.com/moldab
 
 | Asset | Type | Runtime deps |
 |-------|------|-------------|
-| `ssh-watcher_VERSION_amd64.deb` | Debian/Ubuntu package | None (static) |
-| `ssh-watcher-VERSION-1.x86_64.rpm` | Fedora/RHEL package | None (static) |
+| `ssh-watcher-static_VERSION_amd64.deb` | Debian/Ubuntu package | None (static) |
+| `ssh-watcher-static-VERSION-1.x86_64.rpm` | Fedora/RHEL package | None (static) |
+| `ssh-watcher_VERSION_amd64.deb` | Debian/Ubuntu package | libsystemd0, libbpf1 |
+| `ssh-watcher-VERSION-1.x86_64.rpm` | Fedora/RHEL package | systemd-libs, libbpf |
 | `ssh-watcher-x86_64-linux-static` | Static binary (musl) | None |
 | `ssh-watcher-x86_64-linux` | Dynamic binary (glibc) | libsystemd, libbpf |
 
@@ -116,7 +118,7 @@ urgency_success = "normal"
 urgency_failure = "critical"
 urgency_disconnect = "low"
 title_template = "SSH: {event_type}"
-body_template = "{username}@{source_ip}"
+body_template = "{username}@{source_ip}:{source_port}"
 
 [log]
 enabled = false
@@ -129,12 +131,12 @@ enabled = false
 url = "https://hooks.slack.com/services/..."
 timeout_seconds = 5
 max_retries = 3
-payload_template = '{"text": "SSH {event_type}: {username} from {source_ip}"}'
+payload_template = '{"text": "SSH {event_type}: {username} from {source_ip} on {hostname}"}'
 ```
 
 ### Template variables
 
-`{event_type}`, `{username}`, `{source_ip}`, `{source_port}`, `{timestamp}`, `{session_id}`, `{pid}`
+`{event_type}`, `{username}`, `{source_ip}`, `{source_port}`, `{timestamp}`, `{session_id}`, `{pid}`, `{hostname}`
 
 ### Backend selection
 
@@ -230,7 +232,7 @@ For journal/logfile backends, connections with no auth event within `auth_timeou
 Each line is a JSON object:
 
 ```json
-{"timestamp":1776193237140040708,"event_type":"auth_success","source_ip":"192.168.88.18","source_port":55406,"username":"moldabekov","pid":3842338,"session_id":3842338,"backend":"journal"}
+{"timestamp":1776193237140040708,"event_type":"auth_success","source_ip":"192.168.88.18","source_port":55406,"username":"moldabekov","pid":3842338,"session_id":3842338,"backend":"journal","hostname":"web-01"}
 ```
 
 Parse with `jq`:

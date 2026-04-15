@@ -13,6 +13,10 @@ pub const Connection = struct {
     pub fn connect(bus_address: []const u8) !Connection {
         const path = extractSocketPath(bus_address) orelse return error.InvalidArgument;
         const stream = try net.connectUnixSocket(path);
+        // Set 3-second receive timeout to prevent blocking forever
+        // if D-Bus daemon stalls or a malicious broker never responds
+        const timeout = posix.timeval{ .sec = 3, .usec = 0 };
+        posix.setsockopt(stream.handle, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
         var conn = Connection{ .stream = stream };
         try conn.authenticate();
         try conn.hello();

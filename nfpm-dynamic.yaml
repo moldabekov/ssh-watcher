@@ -3,18 +3,24 @@ arch: amd64
 platform: linux
 version: "${VERSION}"
 maintainer: "Margulan Moldabekov <moldabekov@gmail.com>"
-description: "SSH connection monitoring daemon with eBPF, desktop notifications, and webhooks (static build)"
+description: "SSH connection monitoring daemon with eBPF, desktop notifications, and webhooks (dynamic build)"
 vendor: "Margulan Moldabekov"
 license: MIT
 homepage: "https://github.com/moldabekov/ssh-watcher"
 
 overrides:
   deb:
+    depends:
+      - libsystemd0
+      - libbpf1
     conflicts:
-      - ssh-watcher-dynamic
+      - ssh-watcher-static
   rpm:
+    depends:
+      - systemd-libs
+      - libbpf
     conflicts:
-      - ssh-watcher-dynamic
+      - ssh-watcher-static
 
 contents:
   - src: ssh-watcher

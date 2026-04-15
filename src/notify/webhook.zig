@@ -4,6 +4,7 @@ const SSHEvent = @import("../event.zig").SSHEvent;
 const WebhookEndpoint = @import("../config.zig").WebhookEndpoint;
 const template = @import("../template.zig");
 const sink = @import("sink.zig");
+const getHostname = template.getHostname;
 
 pub fn run(ctx: *sink.SinkContext) void {
     while (!ctx.stopped()) {
@@ -17,9 +18,11 @@ pub fn run(ctx: *sink.SinkContext) void {
 }
 
 fn sendWithRetry(ep: WebhookEndpoint, ev: *const SSHEvent) void {
+    const max_retries = @min(ep.max_retries, 10);
+    const max_delay_ms: u64 = 30_000;
     var delay_ms: u64 = 1000;
-    for (0..ep.max_retries + 1) |attempt| {
-        if (attempt > 0) std.Thread.sleep(delay_ms * std.time.ns_per_ms);
+    for (0..max_retries + 1) |attempt| {
+        if (attempt > 0) std.Thread.sleep(@as(u64, @min(delay_ms, max_delay_ms)) * std.time.ns_per_ms);
         delay_ms *= 2;
         if (sendOnce(ep, ev)) return;
     }
@@ -56,11 +59,13 @@ pub fn defaultPayload(ev: *const SSHEvent, buf: []u8) ![]const u8 {
 
     var escaped_user_buf: [256]u8 = undefined;
     const escaped_user = jsonEscape(ev.usernameSlice(), &escaped_user_buf);
+    var escaped_host_buf: [128]u8 = undefined;
+    const escaped_host = jsonEscape(getHostname(), &escaped_host_buf);
 
     var stream = std.io.fixedBufferStream(buf);
     try stream.writer().print(
-        "{{\"timestamp\":{d},\"event_type\":\"{s}\",\"source_ip\":\"{s}\",\"source_port\":{d},\"username\":\"{s}\",\"pid\":{d},\"session_id\":{d}}}",
-        .{ ev.timestamp, ev.event_type.toString(), ip, ev.source_port, escaped_user, ev.pid, ev.session_id },
+        "{{\"timestamp\":{d},\"event_type\":\"{s}\",\"source_ip\":\"{s}\",\"source_port\":{d},\"username\":\"{s}\",\"pid\":{d},\"session_id\":{d},\"hostname\":\"{s}\"}}",
+        .{ ev.timestamp, ev.event_type.toString(), ip, ev.source_port, escaped_user, ev.pid, ev.session_id, escaped_host },
     );
     return stream.getWritten();
 }

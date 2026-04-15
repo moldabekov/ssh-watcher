@@ -19,7 +19,7 @@ urgency_connection = "low"
 urgency_success = "critical"
 urgency_failure = "normal"
 urgency_disconnect = "low"
-# template vars: {event_type}, {username}, {source_ip}, {source_port}, {timestamp}, {session_id}, {pid}
+# template vars: {event_type}, {username}, {source_ip}, {source_port}, {timestamp}, {session_id}, {pid}, {hostname}
 title_template = "SSH: {event_type}"
 body_template = "{username}@{source_ip}"
 
@@ -34,4 +34,4 @@ enabled = false
 # url = "https://hooks.slack.com/services/..."
 # timeout_seconds = 5
 # max_retries = 3
-# payload_template = '{"text": "SSH {event_type}: {username} from {source_ip}"}'
+# payload_template = '{"text": "SSH {event_type}: {username} from {source_ip} on {hostname}"}'

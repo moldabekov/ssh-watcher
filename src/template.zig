@@ -1,5 +1,24 @@
 const std = @import("std");
+const posix = std.posix;
 const SSHEvent = @import("event.zig").SSHEvent;
+
+/// Cached hostname, resolved once on first access via gethostname(2).
+var hostname_buf: [64]u8 = undefined;
+var hostname_len: usize = 0;
+var hostname_resolved: bool = false;
+
+pub fn getHostname() []const u8 {
+    if (hostname_resolved) return hostname_buf[0..hostname_len];
+    const name = posix.gethostname(&hostname_buf) catch {
+        @memcpy(hostname_buf[0..7], "unknown");
+        hostname_len = 7;
+        hostname_resolved = true;
+        return hostname_buf[0..hostname_len];
+    };
+    hostname_len = name.len;
+    hostname_resolved = true;
+    return hostname_buf[0..hostname_len];
+}
 
 pub fn expand(template_str: []const u8, ev: *const SSHEvent, buf: []u8) ![]const u8 {
     var stream = std.io.fixedBufferStream(buf);
@@ -59,6 +78,8 @@ fn writeVar(writer: anytype, name: []const u8, ev: *const SSHEvent) !void {
         try writer.print("{d}", .{ev.session_id});
     } else if (std.mem.eql(u8, name, "pid")) {
         try writer.print("{d}", .{ev.pid});
+    } else if (std.mem.eql(u8, name, "hostname")) {
+        try writer.writeAll(getHostname());
     } else {
         try writer.writeByte('{');
         try writer.writeAll(name);

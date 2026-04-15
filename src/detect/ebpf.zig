@@ -244,21 +244,18 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
     if (ev.event_type == .disconnect) {
         const ip4 = ev.ipv4Slice();
         const dc_window: u64 = 5 * std.time.ns_per_s;
-        for (seen_dc[0..seen_dc_count]) |*dk| {
+        const dc_scan_len = @min(seen_dc_count, MAX_SEEN_DC);
+        for (seen_dc[0..dc_scan_len]) |*dk| {
             if (std.mem.eql(u8, &dk.ip, &ip4) and dk.port == ev.source_port and
                 ev.timestamp -| dk.timestamp < dc_window)
             {
                 return 0; // duplicate within window
             }
         }
-        // Record this disconnect
-        if (seen_dc_count < MAX_SEEN_DC) {
-            seen_dc[seen_dc_count] = .{ .ip = ip4, .port = ev.source_port, .timestamp = ev.timestamp };
-            seen_dc_count += 1;
-        } else {
-            // Overwrite oldest
-            seen_dc[0] = .{ .ip = ip4, .port = ev.source_port, .timestamp = ev.timestamp };
-        }
+        // Record this disconnect (circular buffer)
+        const idx = seen_dc_count % MAX_SEEN_DC;
+        seen_dc[idx] = .{ .ip = ip4, .port = ev.source_port, .timestamp = ev.timestamp };
+        seen_dc_count +%= 1;
     }
 
     ctx.emit(ev);

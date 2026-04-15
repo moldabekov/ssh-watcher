@@ -85,7 +85,7 @@ pub fn parseIPInto(ip_str: []const u8, out: *[16]u8) void {
     for (ip_str) |ch| {
         if (ch == '.') {
             if (idx < 4) {
-                octets[idx] = @intCast(cur);
+                octets[idx] = if (cur > 255) 255 else @intCast(cur);
                 idx += 1;
                 cur = 0;
             }
@@ -93,7 +93,7 @@ pub fn parseIPInto(ip_str: []const u8, out: *[16]u8) void {
             cur = cur * 10 + (ch - '0');
         }
     }
-    if (idx < 4) octets[idx] = @intCast(cur);
+    if (idx < 4) octets[idx] = if (cur > 255) 255 else @intCast(cur);
     out[12] = octets[0];
     out[13] = octets[1];
     out[14] = octets[2];

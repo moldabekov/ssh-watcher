@@ -1,6 +1,7 @@
 const std = @import("std");
 const SSHEvent = @import("../event.zig").SSHEvent;
 const sink = @import("sink.zig");
+const template = @import("../template.zig");
 
 pub fn run(ctx: *sink.SinkContext) void {
     runImpl(ctx) catch |err| {
@@ -35,9 +36,12 @@ pub fn writeEvent(file: std.fs.File, ev: *const SSHEvent) !void {
 
     var buf: [1024]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buf);
+    var escaped_host_buf: [128]u8 = undefined;
+    const escaped_host = jsonEscape(template.getHostname(), &escaped_host_buf);
+
     try stream.writer().print(
-        "{{\"timestamp\":{d},\"event_type\":\"{s}\",\"source_ip\":\"{s}\",\"source_port\":{d},\"username\":\"{s}\",\"pid\":{d},\"session_id\":{d},\"backend\":\"{s}\"}}\n",
-        .{ ev.timestamp, ev.event_type.toString(), ip_str, ev.source_port, escaped_user, ev.pid, ev.session_id, ev.backend.toString() },
+        "{{\"timestamp\":{d},\"event_type\":\"{s}\",\"source_ip\":\"{s}\",\"source_port\":{d},\"username\":\"{s}\",\"pid\":{d},\"session_id\":{d},\"backend\":\"{s}\",\"hostname\":\"{s}\"}}\n",
+        .{ ev.timestamp, ev.event_type.toString(), ip_str, ev.source_port, escaped_user, ev.pid, ev.session_id, ev.backend.toString(), escaped_host },
     );
     try file.writeAll(stream.getWritten());
 }
