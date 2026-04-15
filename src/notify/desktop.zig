@@ -66,15 +66,15 @@ fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
 
         if (our_uid == uid) {
             if (sendViaDbus(addr, title, body, urgency)) {
-                std.debug.print("desktop: sent via dbus-direct (uid={d})\n", .{uid});
+                std.log.debug("desktop: sent via dbus-direct (uid={d})\n", .{uid});
                 return;
             }
         } else {
             if (sendViaDbusFork(addr, uid, title, body, urgency)) {
-                std.debug.print("desktop: sent via dbus-fork (uid={d})\n", .{uid});
+                std.log.debug("desktop: sent via dbus-fork (uid={d})\n", .{uid});
                 return;
             }
-            std.debug.print("desktop: fork failed, falling back to notify-send (uid={d})\n", .{uid});
+            std.log.debug("desktop: fork failed, falling back to notify-send (uid={d})\n", .{uid});
             notifySendFallback(title, body, urgency, uid, entry.name);
             return;
         }

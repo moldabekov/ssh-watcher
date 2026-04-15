@@ -1,5 +1,10 @@
 # ssh-watcher
 
+![GitHub Release](https://img.shields.io/github/v/release/moldabekov/ssh-watcher)
+[![Release](https://github.com/moldabekov/ssh-watcher/actions/workflows/release.yml/badge.svg?branch=master)](https://github.com/moldabekov/ssh-watcher/actions/workflows/release.yml)
+![GitHub License](https://img.shields.io/github/license/moldabekov/ssh-watcher)
+![GitHub repo size](https://img.shields.io/github/repo-size/moldabekov/ssh-watcher)
+
 A Linux daemon that monitors incoming SSH connections and alerts you through desktop notifications, log files, and webhooks. Written in Zig with an eBPF-first detection approach.
 
 ## Features
