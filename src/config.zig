@@ -56,7 +56,7 @@ pub const Config = struct {
     body_template: []const u8 = "{username}@{source_ip}:{source_port}",
 
     log_enabled: bool = false,
-    log_path: []const u8 = "/var/log/ssh-notifier.log",
+    log_path: []const u8 = "/var/log/ssh-watcher.log",
 
     webhook_enabled: bool = false,
     endpoints: []WebhookEndpoint = &.{},
@@ -221,7 +221,7 @@ pub fn mergeConfigs(base: Config, over: Config) Config {
     if (over.backend != .auto) m.backend = over.backend;
     if (over.ssh_port != 22) m.ssh_port = over.ssh_port;
     if (over.auth_timeout_seconds != 30) m.auth_timeout_seconds = over.auth_timeout_seconds;
-    if (!std.mem.eql(u8, over.log_path, "/var/log/ssh-notifier.log")) m.log_path = over.log_path;
+    if (!std.mem.eql(u8, over.log_path, "/var/log/ssh-watcher.log")) m.log_path = over.log_path;
     if (over.endpoints.len > 0) m.endpoints = over.endpoints;
     return m;
 }

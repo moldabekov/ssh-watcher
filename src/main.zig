@@ -19,7 +19,7 @@ const webhook = @import("notify/webhook.zig");
 const sink_mod = @import("notify/sink.zig");
 
 const VERSION = "0.1.0";
-const SYSTEM_CONFIG = "/etc/ssh-notifier/config.toml";
+const SYSTEM_CONFIG = "/etc/ssh-watcher/config.toml";
 
 var should_stop = std.atomic.Value(bool).init(false);
 var should_reload = std.atomic.Value(bool).init(false);
@@ -51,7 +51,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("ssh-notifier v{s} starting\n", .{VERSION});
+    std.debug.print("ssh-watcher v{s} starting\n", .{VERSION});
 
     var config = loadConfig(allocator) catch |err| {
         std.debug.print("config error: {}\n", .{err});
@@ -114,7 +114,7 @@ pub fn main() !void {
     // Main loop consumer — feeds session table from ring buffer events
     var session_consumer = ring.consumer();
 
-    std.debug.print("ssh-notifier running\n", .{});
+    std.debug.print("ssh-watcher running\n", .{});
     sdNotify("READY=1\n");
 
     // Main loop
@@ -158,7 +158,7 @@ pub fn main() !void {
         // SIGUSR1 status dump
         if (should_dump.load(.acquire)) {
             should_dump.store(false, .release);
-            std.debug.print("=== ssh-notifier status ===\n", .{});
+            std.debug.print("=== ssh-watcher status ===\n", .{});
             std.debug.print("backend: {s}\n", .{@tagName(backend_type)});
             std.debug.print("ring buffer write pos: {d}\n", .{ring.write_pos.load(.monotonic)});
             std.debug.print("active sessions: {d}\n", .{sessions.entries.count()});
@@ -175,7 +175,7 @@ pub fn main() !void {
     if (webhook_thread) |t| t.join();
     if (desktop_thread) |t| t.join();
     if (log_thread) |t| t.join();
-    std.debug.print("ssh-notifier stopped\n", .{});
+    std.debug.print("ssh-watcher stopped\n", .{});
 }
 
 fn runBackend(backend_type: backend_mod.BackendType, ctx: *backend_mod.Context) void {
@@ -224,7 +224,7 @@ fn loadConfig(allocator: std.mem.Allocator) !Config {
         return sys_config orelse Config{};
     };
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const user_path = std.fmt.bufPrint(&path_buf, "{s}/.config/ssh-notifier/config.toml", .{home}) catch {
+    const user_path = std.fmt.bufPrint(&path_buf, "{s}/.config/ssh-watcher/config.toml", .{home}) catch {
         if (sys_config) |*sc| sc.ownContent(sys_content.?);
         return sys_config orelse Config{};
     };

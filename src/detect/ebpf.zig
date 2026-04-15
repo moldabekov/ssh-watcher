@@ -31,6 +31,18 @@ var global_ctx: ?*Context = null;
 var seen_auth: [MAX_SEEN]u64 = [_]u64{0} ** MAX_SEEN;
 var seen_count: usize = 0;
 
+/// Dedup disconnect events: multiple sshd processes exit per session
+/// (session handler + privsep monitor). Track last disconnect by (IP, port)
+/// and suppress duplicates within a short window.
+const MAX_SEEN_DC = 32;
+const DcKey = struct { ip: [4]u8, port: u16, timestamp: u64 };
+var seen_dc: [MAX_SEEN_DC]DcKey = [_]DcKey{.{
+    .ip = .{ 0, 0, 0, 0 },
+    .port = 0,
+    .timestamp = 0,
+}} ** MAX_SEEN_DC;
+var seen_dc_count: usize = 0;
+
 /// Cache recent connection events so auth_success/disconnect can be enriched
 /// with the client IP/port (which only the connection tracepoint sees).
 const MAX_CONNS = 64;
@@ -175,8 +187,10 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
         }
     }
 
-    // Resolve UID to username via getpwuid
-    if (bpf_ev.uid != 0 or ev.event_type == .auth_success) {
+    // Resolve UID to username via getpwuid.
+    // Skip connection events — no auth has happened yet, and the UID
+    // from inet_sock_set_state is from softirq context (meaningless).
+    if (ev.event_type != .connection) {
         const pw = c.getpwuid(bpf_ev.uid);
         if (pw != null) {
             const name = std.mem.sliceTo(pw.*.pw_name, 0);
@@ -205,8 +219,8 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
         }
     }
 
-    // Auth/disconnect events: enrich with most recent connection's IP/port
-    // (eBPF exec/exit tracepoints don't have socket context)
+    // Auth/disconnect events: fallback to cached IP if BPF conn_map missed
+    // (BPF fork-tracking provides accurate IP for most sessions)
     if ((ev.event_type == .auth_success or ev.event_type == .disconnect) and
         ev.source_ip[12] == 0 and ev.source_ip[13] == 0 and
         ev.source_ip[14] == 0 and ev.source_ip[15] == 0)
@@ -218,14 +232,33 @@ fn handleEvent(_: ?*anyopaque, data: ?*anyopaque, _: usize) callconv(.c) c_int {
         }
     }
 
-    // Skip priv-sep noise: auth_success/disconnect with UID 0 where
-    // a non-root auth_success exists for the same connection.
-    // This filters sshd internal processes for non-root logins while
-    // still allowing real root SSH logins through.
-    if (bpf_ev.uid == 0 and (ev.event_type == .auth_success or ev.event_type == .disconnect)) {
-        // Check if username is "sshd" — always noise
+    // Skip priv-sep noise: username "sshd" means it's an internal sshd
+    // process (privsep child), not a real user session. The privsep child
+    // runs as the sshd system user (UID 74 on Fedora, varies by distro).
+    if (ev.event_type == .auth_success or ev.event_type == .disconnect) {
         if (std.mem.startsWith(u8, ev.usernameSlice(), "sshd")) return 0;
-        // For root auth_success, let the dedup handle it (first one per session wins)
+    }
+
+    // Dedup disconnect: multiple sshd processes exit per session teardown
+    // (session handler + privsep monitor). Suppress duplicates by (IP, port).
+    if (ev.event_type == .disconnect) {
+        const ip4 = ev.ipv4Slice();
+        const dc_window: u64 = 5 * std.time.ns_per_s;
+        for (seen_dc[0..seen_dc_count]) |*dk| {
+            if (std.mem.eql(u8, &dk.ip, &ip4) and dk.port == ev.source_port and
+                ev.timestamp -| dk.timestamp < dc_window)
+            {
+                return 0; // duplicate within window
+            }
+        }
+        // Record this disconnect
+        if (seen_dc_count < MAX_SEEN_DC) {
+            seen_dc[seen_dc_count] = .{ .ip = ip4, .port = ev.source_port, .timestamp = ev.timestamp };
+            seen_dc_count += 1;
+        } else {
+            // Overwrite oldest
+            seen_dc[0] = .{ .ip = ip4, .port = ev.source_port, .timestamp = ev.timestamp };
+        }
     }
 
     ctx.emit(ev);

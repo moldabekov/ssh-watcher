@@ -1,10 +1,10 @@
 [Unit]
-Description=SSH Connection Notifier
+Description=SSH Connection Watcher
 After=network.target sshd.service
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/ssh-notifier
+ExecStart=/usr/bin/ssh-watcher
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
@@ -14,7 +14,7 @@ AmbientCapabilities=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SETUID C
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/log/ssh-notifier.log
+ReadWritePaths=/var/log/ssh-watcher.log
 PrivateTmp=yes
 
 [Install]

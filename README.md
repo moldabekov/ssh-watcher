@@ -1,4 +1,4 @@
-# ssh-notifier
+# ssh-watcher
 
 A Linux daemon that monitors incoming SSH connections and alerts you through desktop notifications, log files, and webhooks. Written in Zig with an eBPF-first detection approach.
 
@@ -26,8 +26,8 @@ Pre-built binaries from [GitHub Releases](https://github.com/moldabekov/ssh-watc
 
 | Binary | Linking | Runtime deps |
 |--------|---------|-------------|
-| `ssh-notifier-x86_64-linux-static` | Fully static (musl) | None – runs on any Linux |
-| `ssh-notifier-x86_64-linux` | Dynamic (glibc) | libsystemd, libbpf |
+| `ssh-watcher-x86_64-linux-static` | Fully static (musl) | None – runs on any Linux |
+| `ssh-watcher-x86_64-linux` | Dynamic (glibc) | libsystemd, libbpf |
 
 ## Requirements
 
@@ -68,21 +68,21 @@ zig build release-static -Dmusl-sysroot=/path/to/sysroot
 
 ```bash
 # Install binary
-sudo cp zig-out/bin/ssh-notifier /usr/bin/
+sudo cp zig-out/bin/ssh-watcher /usr/bin/
 
 # Install config
-sudo mkdir -p /etc/ssh-notifier
-sudo cp config/ssh-notifier.toml /etc/ssh-notifier/config.toml
+sudo mkdir -p /etc/ssh-watcher
+sudo cp config/ssh-watcher.toml /etc/ssh-watcher/config.toml
 
 # Install systemd service
-sudo cp config/ssh-notifier.service /etc/systemd/system/
+sudo cp config/ssh-watcher.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now ssh-notifier
+sudo systemctl enable --now ssh-watcher
 ```
 
 ## Configuration
 
-System-wide config at `/etc/ssh-notifier/config.toml`, per-user overrides at `~/.config/ssh-notifier/config.toml`.
+System-wide config at `/etc/ssh-watcher/config.toml`, per-user overrides at `~/.config/ssh-watcher/config.toml`.
 
 ```toml
 [detection]
@@ -107,7 +107,7 @@ body_template = "{username}@{source_ip}"
 
 [log]
 enabled = false
-path = "/var/log/ssh-notifier.log"
+path = "/var/log/ssh-watcher.log"
 
 [webhook]
 enabled = false
@@ -139,23 +139,23 @@ In `auto` mode, the daemon probes backends in priority order and selects the bes
 ### Run directly
 
 ```bash
-sudo ssh-notifier
+sudo ssh-watcher
 ```
 
 ### Systemd service
 
 ```bash
-sudo systemctl start ssh-notifier
-sudo systemctl status ssh-notifier
+sudo systemctl start ssh-watcher
+sudo systemctl status ssh-watcher
 
 # View logs
-sudo journalctl -u ssh-notifier -f
+sudo journalctl -u ssh-watcher -f
 
 # Reload config
-sudo systemctl reload ssh-notifier
+sudo systemctl reload ssh-watcher
 
 # Status dump
-sudo kill -USR1 $(pidof ssh-notifier)
+sudo kill -USR1 $(pidof ssh-watcher)
 ```
 
 ### Signals
@@ -188,11 +188,14 @@ dbus-broker on modern Fedora/systemd rejects cross-UID D-Bus connections, so the
 
 ### eBPF backend
 
-Three BPF tracepoints compiled with CO-RE (Compile Once, Run Everywhere):
+Four BPF tracepoints compiled with CO-RE (Compile Once, Run Everywhere):
 
 - `tp/sock/inet_sock_set_state` – TCP connection established on SSH port
+- `tp/sched/sched_process_fork` – sshd fork chain tracking for PID-to-connection correlation
 - `tp/sched/sched_process_exec` – user shell spawned under sshd (auth success)
 - `tp/sched/sched_process_exit` – sshd session process exit (disconnect)
+
+A BPF LRU hash map (`conn_map`) propagates client IP/port through sshd's fork chain, enabling accurate per-session correlation even with concurrent connections.
 
 The BPF ELF object is embedded in the binary via `@embedFile` – no external file needed at runtime.
 
@@ -221,22 +224,22 @@ Parse with `jq`:
 
 ```bash
 # All auth failures
-cat /var/log/ssh-notifier.log | jq 'select(.event_type == "auth_failure")'
+cat /var/log/ssh-watcher.log | jq 'select(.event_type == "auth_failure")'
 
 # Unique source IPs
-cat /var/log/ssh-notifier.log | jq -r '.source_ip' | sort -u
+cat /var/log/ssh-watcher.log | jq -r '.source_ip' | sort -u
 
 # Events from a specific IP
-cat /var/log/ssh-notifier.log | jq 'select(.source_ip == "10.0.0.1")'
+cat /var/log/ssh-watcher.log | jq 'select(.source_ip == "10.0.0.1")'
 
 # Events by backend
-cat /var/log/ssh-notifier.log | jq 'select(.backend == "ebpf")'
+cat /var/log/ssh-watcher.log | jq 'select(.backend == "ebpf")'
 ```
 
 ## Project structure
 
 ```
-ssh-notifier/
+ssh-watcher/
 ├── build.zig                  # Build script (dev, release, release-static)
 ├── .github/workflows/
 │   └── release.yml            # CI: static (Alpine/musl) + dynamic (Ubuntu/glibc)
@@ -265,8 +268,8 @@ ssh-notifier/
 │       ├── logwriter.zig      # JSON log writer
 │       └── webhook.zig        # Webhook POST with retry
 └── config/
-    ├── ssh-notifier.toml      # Example config
-    └── ssh-notifier.service   # Systemd unit
+    ├── ssh-watcher.toml      # Example config
+    └── ssh-watcher.service   # Systemd unit
 ```
 
 ## License

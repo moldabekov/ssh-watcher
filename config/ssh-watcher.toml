@@ -1,6 +1,6 @@
-# SSH Notifier configuration
-# System-wide: /etc/ssh-notifier/config.toml
-# Per-user:    ~/.config/ssh-notifier/config.toml
+# SSH Watcher configuration
+# System-wide: /etc/ssh-watcher/config.toml
+# Per-user:    ~/.config/ssh-watcher/config.toml
 
 [detection]
 backend = "journal"				# "auto", "ebpf", "journal", "logfile", "utmp"
@@ -25,7 +25,7 @@ body_template = "{username}@{source_ip}"
 
 [log]
 enabled = false
-path = "/var/log/ssh-notifier.log"
+path = "/var/log/ssh-watcher.log"
 
 [webhook]
 enabled = false

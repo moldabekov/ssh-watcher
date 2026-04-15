@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);
-    b.step("run", "Run ssh-notifier").dependOn(&run_cmd.step);
+    b.step("run", "Run ssh-watcher").dependOn(&run_cmd.step);
 
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });
     b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(exe_tests).step);
@@ -34,10 +34,10 @@ pub fn build(b: *std.Build) void {
         const rel_exe = addExe(b, resolved, .ReleaseSmall, true, true, &bpf_compile.step);
         const install = b.addInstallArtifact(rel_exe, .{
             .dest_dir = .{ .override = .{ .custom = "release" } },
-            .dest_sub_path = "ssh-notifier-x86_64-linux",
+            .dest_sub_path = "ssh-watcher-x86_64-linux",
         });
         const upx = b.addSystemCommand(&.{ "upx", "--best", "--lzma" });
-        upx.addArg(b.getInstallPath(.{ .custom = "release" }, "ssh-notifier-x86_64-linux"));
+        upx.addArg(b.getInstallPath(.{ .custom = "release" }, "ssh-watcher-x86_64-linux"));
         upx.step.dependOn(&install.step);
         release_step.dependOn(&upx.step);
     }
@@ -60,10 +60,10 @@ pub fn build(b: *std.Build) void {
             const rel_exe = addStaticExe(b, resolved, &bpf_compile.step, sysroot);
             const install = b.addInstallArtifact(rel_exe, .{
                 .dest_dir = .{ .override = .{ .custom = "release" } },
-                .dest_sub_path = "ssh-notifier-" ++ rt.name,
+                .dest_sub_path = "ssh-watcher-" ++ rt.name,
             });
             const upx = b.addSystemCommand(&.{ "upx", "--best", "--lzma" });
-            upx.addArg(b.getInstallPath(.{ .custom = "release" }, "ssh-notifier-" ++ rt.name));
+            upx.addArg(b.getInstallPath(.{ .custom = "release" }, "ssh-watcher-" ++ rt.name));
             upx.step.dependOn(&install.step);
             static_step.dependOn(&upx.step);
         }
@@ -80,7 +80,7 @@ fn addExe(
     bpf_step: *std.Build.Step,
 ) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
-        .name = "ssh-notifier",
+        .name = "ssh-watcher",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -115,7 +115,7 @@ fn addStaticExe(
     sysroot: []const u8,
 ) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
-        .name = "ssh-notifier",
+        .name = "ssh-watcher",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,

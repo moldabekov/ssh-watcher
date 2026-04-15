@@ -57,7 +57,7 @@ pub const Connection = struct {
     pub fn notify(self: *Connection, summary: []const u8, body: []const u8, urgency: u8) !void {
         var buf: [4096]u8 = undefined;
         var p: usize = 0;
-        p += writeStr(&buf, p, "ssh-notifier");
+        p += writeStr(&buf, p, "ssh-watcher");
         p += writeU32(&buf, p, 0);
         p += writeStr(&buf, p, "dialog-warning");
         p += writeStr(&buf, p, summary);

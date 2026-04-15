@@ -10,8 +10,14 @@ pub fn expand(template_str: []const u8, ev: *const SSHEvent, buf: []u8) ![]const
         if (template_str[i] == '{') {
             if (findVarEnd(template_str, i + 1)) |end| {
                 const var_name = template_str[i + 1 .. end];
+                const pos_before = stream.pos;
                 try writeVar(writer, var_name, ev);
                 i = end + 1;
+                // If variable expanded to empty, skip a trailing '@'
+                // so "{username}@{source_ip}" renders as just "{source_ip}"
+                if (stream.pos == pos_before and i < template_str.len and template_str[i] == '@') {
+                    i += 1;
+                }
             } else {
                 try writer.writeByte('{');
                 i += 1;
@@ -145,6 +151,15 @@ test "expand literal text" {
     var buf: [256]u8 = undefined;
     const result = try expand("Hello world", &ev, &buf);
     try std.testing.expectEqualStrings("Hello world", result);
+}
+
+test "expand empty username skips @" {
+    var ev = SSHEvent{};
+    ev.setIPv4(10, 0, 0, 1);
+    // username is empty (default)
+    var buf: [256]u8 = undefined;
+    const result = try expand("{username}@{source_ip}", &ev, &buf);
+    try std.testing.expectEqualStrings("10.0.0.1", result);
 }
 
 test "expand unknown var passed through" {

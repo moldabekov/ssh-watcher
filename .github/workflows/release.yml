@@ -125,12 +125,12 @@ jobs:
           path: /tmp/musl-sysroot
           key: musl-alpine-elogind-${{ env.ELOGIND_VERSION }}-${{ env.LIBBPF_VERSION }}-v32
 
-      - name: Build ssh-notifier (fully static)
+      - name: Build ssh-watcher (fully static)
         run: zig build release-static -Dmusl-sysroot=/tmp/musl-sysroot
 
       - name: Verify binary
         run: |
-          BIN=zig-out/release/ssh-notifier-x86_64-linux-static
+          BIN=zig-out/release/ssh-watcher-x86_64-linux-static
           file "$BIN"
           ls -lh "$BIN"
           ldd "$BIN" 2>&1 || echo "Not a dynamic executable (fully static)"
@@ -139,8 +139,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ssh-notifier-x86_64-linux-static
-          path: zig-out/release/ssh-notifier-x86_64-linux-static
+          name: ssh-watcher-x86_64-linux-static
+          path: zig-out/release/ssh-watcher-x86_64-linux-static
 
   build-dynamic:
     name: Dynamic build (x86_64 glibc)
@@ -184,8 +184,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ssh-notifier-x86_64-linux
-          path: zig-out/release/ssh-notifier-x86_64-linux
+          name: ssh-watcher-x86_64-linux
+          path: zig-out/release/ssh-watcher-x86_64-linux
 
   release:
     name: Create release
@@ -202,5 +202,5 @@ jobs:
           draft: false
           generate_release_notes: true
           files: |
-            artifacts/ssh-notifier-x86_64-linux-static/ssh-notifier-x86_64-linux-static
-            artifacts/ssh-notifier-x86_64-linux/ssh-notifier-x86_64-linux
+            artifacts/ssh-watcher-x86_64-linux-static/ssh-watcher-x86_64-linux-static
+            artifacts/ssh-watcher-x86_64-linux/ssh-watcher-x86_64-linux
