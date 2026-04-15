@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="ssh-watcher" width="200">
+</p>
+
 # ssh-watcher
 
 ![GitHub Release](https://img.shields.io/github/v/release/moldabekov/ssh-watcher)
@@ -47,6 +51,7 @@ Pre-built binaries and packages from [GitHub Releases](https://github.com/moldab
 - libbpf-devel
 - systemd-devel (or elogind-dev on musl systems)
 - bpftool (for generating `vmlinux.h`, optional – pre-compiled BPF object included)
+- upx (for `zig build release` / `zig build release-static` – binary compression)
 
 ### Runtime
 
