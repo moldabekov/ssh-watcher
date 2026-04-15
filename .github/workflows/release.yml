@@ -201,7 +201,9 @@ jobs:
           path: .
 
       - name: Install nfpm
-        run: curl -sfL https://raw.githubusercontent.com/goreleaser/nfpm/main/install.sh | sudo sh -s -- -b /usr/local/bin
+        run: |
+          curl -fL "https://github.com/goreleaser/nfpm/releases/download/v2.46.1/nfpm_2.46.1_amd64.deb" -o nfpm.deb
+          sudo dpkg -i nfpm.deb
 
       - name: Prepare binary
         run: |
