@@ -19,6 +19,7 @@ const journal = if (is_linux) @import("detect/linux/journal.zig") else void;
 const ebpf = if (is_linux) @import("detect/linux/ebpf.zig") else void;
 const utmp_mod = if (is_linux) @import("detect/linux/utmp.zig") else void;
 const logstream = if (is_macos) @import("detect/macos/logstream.zig") else void;
+const utmpx = if (is_macos) @import("detect/macos/utmpx.zig") else void;
 const logwriter = @import("notify/logwriter.zig");
 const desktop = if (is_linux) @import("notify/linux/desktop.zig") else void;
 const webhook = @import("notify/webhook.zig");
@@ -190,7 +191,7 @@ fn runBackend(backend_type: backend_mod.BackendType, ctx: *backend_mod.Context) 
         .utmp => if (is_linux) utmp_mod.run(ctx),
         .logstream => if (is_macos) logstream.run(ctx),
         .audit_bsm => {}, // Phase 2: Task 9
-        .utmpx_bsd => {}, // Phase 2: Task 8
+        .utmpx_bsd => if (is_macos) utmpx.run(ctx),
     }
 }
 
@@ -287,5 +288,6 @@ test {
     }
     if (is_macos) {
         _ = @import("detect/macos/logstream.zig");
+        _ = @import("detect/macos/utmpx.zig");
     }
 }
