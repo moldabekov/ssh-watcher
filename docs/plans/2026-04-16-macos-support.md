@@ -125,14 +125,12 @@ git mv src/detect/utmp.zig src/detect/linux/
 - Line 4: `@import("../event.zig")` -> `@import("../../event.zig")`
 - Line 5: `@import("backend.zig")` -> `@import("../backend.zig")`
 - Line 6: `@import("patterns.zig")` -> `@import("../patterns.zig")`
-- Add: `const ip = @import("../ip.zig");` (if any local parseIPInto references remain)
+- `@import("ip.zig")` -> `@import("../ip.zig")` (Task 1 added this import)
 
 `src/detect/linux/utmp.zig`:
 - Line 2: `@import("../event.zig")` -> `@import("../../event.zig")`
 - Line 3: `@import("backend.zig")` -> `@import("../backend.zig")`
-- Line 4: `@import("../ip.zig")` -> same (already correct depth from Task 1)
-
-Wait -- after Task 1, utmp.zig has `@import("ip.zig")`. After moving to `linux/`, this becomes `@import("../ip.zig")`.
+- Line 4: `@import("ip.zig")` -> `@import("../ip.zig")` (Task 1 changed this from `logfile.zig` to `ip.zig`)
 
 - [ ] **Step 3: Fix imports in `backend.zig`**
 
@@ -164,7 +162,7 @@ Expected: All pass, binary works
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A
+git add src/detect/linux/ src/main.zig
 git commit -m "refactor: move detection backends to detect/linux/"
 ```
 
@@ -209,7 +207,7 @@ Expected: All pass
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A
+git add src/notify/linux/ src/main.zig
 git commit -m "refactor: move desktop notifications + dbus to notify/linux/"
 ```
 
@@ -254,31 +252,25 @@ Note: `posix.Sigaction.flags` type may differ. If Zig 0.15 provides `std.posix.S
 
 - [ ] **Step 4: Guard `sdNotify` function**
 
-Wrap the entire function body with a comptime check:
-```zig
-fn sdNotify(state: []const u8) void {
-    if (!is_linux) return;
-    // ... existing implementation unchanged
-}
-```
+The function body references `linux.AF.UNIX`, `linux.SOCK.DGRAM`, `linux.sockaddr.un` etc. Since `linux` is `void` on macOS, these would fail even inside a runtime guard. Use a comptime-selected function instead:
 
-Or alternatively, make sdNotify a comptime-selected function:
+Rename the existing `sdNotify` to `sdNotifyImpl`, then add:
 ```zig
 const sdNotify = if (is_linux) sdNotifyImpl else struct {
     fn f(_: []const u8) void {}
 }.f;
 ```
 
-The first approach (runtime check that compiles away) is simpler. Use that.
+This completely eliminates the function body on macOS at compile time.
 
 - [ ] **Step 5: Guard session timeout inference**
 
 Line 148: change `if (backend_type != .ebpf)` to:
 ```zig
-if (backend_type != .ebpf and (!is_macos or backend_type != .audit_bsm)) {
+if (backend_type != .ebpf and backend_type != .audit_bsm) {
 ```
 
-This excludes both `ebpf` (Linux) and `audit_bsm` (macOS) from timeout inference, since both produce auth events directly.
+Both `ebpf` and `audit_bsm` produce auth events directly and don't need timeout inference. On Linux, `audit_bsm` is never selected so the extra check is harmless.
 
 - [ ] **Step 6: Guard the test block**
 
@@ -517,6 +509,75 @@ Expected: Linux build unchanged
 ```bash
 git add build.zig
 git commit -m "refactor: OS-conditional library linking in build.zig"
+```
+
+---
+
+### Task 6b: Add `release-macos` build step and UPX conditional
+
+**Files:**
+- Modify: `build.zig`
+
+- [ ] **Step 1: Guard UPX with Linux check in existing release steps**
+
+In the `release` step block, wrap the UPX command:
+```zig
+if (resolved.result.os.tag == .linux) {
+    const upx = b.addSystemCommand(&.{ "upx", "--best", "--lzma" });
+    upx.addArg(b.getInstallPath(.{ .custom = "release" }, "ssh-watcher-x86_64-linux"));
+    upx.step.dependOn(&install.step);
+    release_step.dependOn(&upx.step);
+} else {
+    release_step.dependOn(&install.step);
+}
+```
+
+Same pattern for `release-static`.
+
+- [ ] **Step 2: Add `release-macos` build step**
+
+Add after the `release-static` step:
+```zig
+// --- Release: macOS ---
+// zig build release-macos
+const macos_step = b.step("release-macos", "Build macOS production binary (ReleaseSmall, LTO, strip)");
+inline for (.{
+    .{ .arch = std.Target.Cpu.Arch.x86_64, .name = "x86_64-macos" },
+    .{ .arch = std.Target.Cpu.Arch.aarch64, .name = "aarch64-macos" },
+}) |rt| {
+    const resolved = b.resolveTargetQuery(.{ .cpu_arch = rt.arch, .os_tag = .macos });
+    const rel_exe = addExe(b, resolved, .ReleaseSmall, true, true, null);
+    const install_artifact = b.addInstallArtifact(rel_exe, .{
+        .dest_dir = .{ .override = .{ .custom = "release" } },
+        .dest_sub_path = "ssh-watcher-" ++ rt.name,
+    });
+    macos_step.dependOn(&install_artifact.step);
+}
+```
+
+Note: `addExe` is called with `null` for BPF step (no BPF on macOS). The `addExe` function signature needs to accept an optional BPF step (`?*std.Build.Step`).
+
+- [ ] **Step 3: Update `addExe` to accept optional BPF step**
+
+Change the `bpf_step` parameter from `*std.Build.Step` to `?*std.Build.Step`:
+```zig
+fn addExe(b: *std.Build, target: ..., bpf_step: ?*std.Build.Step) ...{
+    // ...
+    if (bpf_step) |step| exe.step.dependOn(step);
+    return exe;
+}
+```
+
+- [ ] **Step 4: Build on Linux**
+
+Run: `zig build test && zig build`
+Expected: Linux build unchanged
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add build.zig
+git commit -m "feat: add release-macos build target, guard UPX for Linux-only"
 ```
 
 ---
@@ -872,12 +933,20 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
 }
 
 /// Escape double quotes and backslashes for AppleScript string literals.
+/// {username} comes from SSH auth data (attacker-controlled), so escaping is required.
+var escape_buf: [1024]u8 = undefined;
 fn escapeAppleScript(input: []const u8) []const u8 {
-    // For v1, return as-is. Full escaping would need a buffer.
-    // AppleScript injection risk is minimal since input comes from
-    // our own templates, not user-controlled SSH data directly.
-    // TODO: proper escaping for untrusted input
-    return input;
+    var i: usize = 0;
+    for (input) |ch| {
+        if (i + 2 > escape_buf.len) break;
+        if (ch == '"' or ch == '\\') {
+            escape_buf[i] = '\\';
+            i += 1;
+        }
+        escape_buf[i] = ch;
+        i += 1;
+    }
+    return escape_buf[0..i];
 }
 ```
 
@@ -985,7 +1054,7 @@ case "$OS" in
     echo "Start: sudo systemctl enable --now ssh-watcher"
     ;;
   Darwin)
-    BINDIR="${PREFIX:-/usr/local}/bin"
+    BINDIR="/usr/local/bin"
     PLISTDIR="/Library/LaunchDaemons"
     install -d "$DESTDIR$BINDIR"
     install -m 755 "$BIN_SRC" "$DESTDIR$BINDIR/ssh-watcher"
