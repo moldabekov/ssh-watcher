@@ -1,7 +1,7 @@
 const std = @import("std");
 const SSHEvent = @import("../event.zig").SSHEvent;
 const Context = @import("backend.zig").Context;
-const logfile = @import("logfile.zig");
+const ip = @import("ip.zig");
 
 // Native utmp definition — avoids @cImport so musl targets work.
 // Layout matches the Linux ABI (glibc/musl compatible, see utmp.h).
@@ -68,7 +68,7 @@ fn scan(known: *std.AutoHashMap(u32, void), ctx: *Context, initial: bool) void {
                 ev.pid = pid;
                 ev.session_id = pid;
                 ev.setUsername(std.mem.sliceTo(&entry.ut_user, 0));
-                logfile.parseIPInto(host, &ev.source_ip);
+                ip.parseIPInto(host, &ev.source_ip);
                 ctx.emit(ev);
             }
         }

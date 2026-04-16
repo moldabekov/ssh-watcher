@@ -2,7 +2,7 @@ const std = @import("std");
 const SSHEvent = @import("../event.zig").SSHEvent;
 const Context = @import("backend.zig").Context;
 const patterns = @import("patterns.zig");
-const logfile = @import("logfile.zig");
+const ip = @import("ip.zig");
 
 const c = @cImport({
     @cInclude("systemd/sd-journal.h");
@@ -69,7 +69,7 @@ fn processMessage(ctx: *Context, msg: []const u8, journal_pid: u32) void {
     // Prefer PID from journal field; fall back to parsing from message
     ev.pid = if (journal_pid != 0) journal_pid else (result.pid orelse 0);
     if (result.port) |ps| ev.source_port = std.fmt.parseInt(u16, ps, 10) catch 0;
-    logfile.parseIPInto(result.ip, &ev.source_ip);
+    ip.parseIPInto(result.ip, &ev.source_ip);
     ev.session_id = ev.pid;
     ctx.emit(ev);
 }
