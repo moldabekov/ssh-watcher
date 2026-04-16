@@ -3,7 +3,9 @@ const posix = std.posix;
 const SSHEvent = @import("event.zig").SSHEvent;
 
 /// Cached hostname, resolved once on first access via gethostname(2).
-var hostname_buf: [64]u8 = undefined;
+/// Size comes from the target's HOST_NAME_MAX (64 on Linux, 72 on macOS)
+/// so posix.gethostname accepts the pointer on both platforms.
+var hostname_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
 var hostname_len: usize = 0;
 var hostname_resolved: bool = false;
 
