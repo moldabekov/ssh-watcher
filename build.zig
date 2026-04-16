@@ -4,17 +4,20 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // --- BPF compilation (shared by all targets) ---
+    // --- BPF compilation (Linux only) ---
     // Recompile BPF probe if vmlinux.h is available; otherwise use committed .bpf.o.
     // CI runners often lack the host kernel's BTF, so this keeps builds working.
-    const bpf_compile = b.addSystemCommand(&.{
-        "sh", "-c",
-        "test -f bpf/vmlinux.h && clang -target bpf -D__TARGET_ARCH_x86_64 -O2 -g -I bpf -c bpf/ssh_monitor.bpf.c -o src/detect/ssh_monitor.bpf.o || echo 'note: bpf/vmlinux.h not found, using committed .bpf.o'",
-    });
+    const bpf_compile: ?*std.Build.Step = if (target.result.os.tag == .linux) blk: {
+        const step = b.addSystemCommand(&.{
+            "sh", "-c",
+            "test -f bpf/vmlinux.h && clang -target bpf -D__TARGET_ARCH_x86_64 -O2 -g -I bpf -c bpf/ssh_monitor.bpf.c -o src/detect/ssh_monitor.bpf.o || echo 'note: bpf/vmlinux.h not found, using committed .bpf.o'",
+        });
+        break :blk &step.step;
+    } else null;
 
     // --- Dev build (default) ---
     // zig build
-    const exe = addExe(b, target, optimize, false, false, &bpf_compile.step);
+    const exe = addExe(b, target, optimize, false, false, bpf_compile);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -31,7 +34,7 @@ pub fn build(b: *std.Build) void {
     const release_step = b.step("release", "Build glibc production binary (ReleaseSmall, LTO, strip, upx)");
     {
         const resolved = b.resolveTargetQuery(.{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu });
-        const rel_exe = addExe(b, resolved, .ReleaseSmall, true, true, &bpf_compile.step);
+        const rel_exe = addExe(b, resolved, .ReleaseSmall, true, true, bpf_compile);
         const install = b.addInstallArtifact(rel_exe, .{
             .dest_dir = .{ .override = .{ .custom = "release" } },
             .dest_sub_path = "ssh-watcher-x86_64-linux",
@@ -57,7 +60,7 @@ pub fn build(b: *std.Build) void {
     }) |rt| {
         if (musl_sysroot) |sysroot| {
             const resolved = b.resolveTargetQuery(.{ .cpu_arch = rt.arch, .os_tag = .linux, .abi = .musl });
-            const rel_exe = addStaticExe(b, resolved, &bpf_compile.step, sysroot);
+            const rel_exe = addStaticExe(b, resolved, bpf_compile, sysroot);
             const install = b.addInstallArtifact(rel_exe, .{
                 .dest_dir = .{ .override = .{ .custom = "release" } },
                 .dest_sub_path = "ssh-watcher-" ++ rt.name,
@@ -70,14 +73,14 @@ pub fn build(b: *std.Build) void {
     }
 }
 
-/// Standard executable — dynamic linking for glibc, used for dev and glibc release.
+/// Standard executable — dynamic linking, used for dev builds and glibc/macOS release.
 fn addExe(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     strip: bool,
     lto: bool,
-    bpf_step: *std.Build.Step,
+    bpf_step: ?*std.Build.Step,
 ) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
         .name = "ssh-watcher",
@@ -88,13 +91,20 @@ fn addExe(
             .strip = if (strip) true else null,
         }),
     });
-    exe.root_module.linkSystemLibrary("libsystemd", .{});
-    exe.root_module.linkSystemLibrary("bpf", .{});
+
+    // OS-conditional library linking
+    const os_tag = target.result.os.tag;
+    if (os_tag == .linux) {
+        exe.root_module.linkSystemLibrary("libsystemd", .{});
+        exe.root_module.linkSystemLibrary("bpf", .{});
+    } else if (os_tag == .macos) {
+        exe.root_module.linkSystemLibrary("bsm", .{});
+    }
     exe.root_module.link_libc = true;
     if (lto) exe.want_lto = true;
 
-    // Explicit targets (release) need manual library paths
-    if (optimize == .ReleaseSmall) {
+    // Explicit Linux release targets need manual library paths
+    if (optimize == .ReleaseSmall and os_tag == .linux) {
         exe.root_module.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });
         // Fedora/RHEL
         exe.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
@@ -103,7 +113,7 @@ fn addExe(
             exe.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib/x86_64-linux-gnu" })
         else |_| {}
     }
-    exe.step.dependOn(bpf_step);
+    if (bpf_step) |step| exe.step.dependOn(step);
     return exe;
 }
 
@@ -111,7 +121,7 @@ fn addExe(
 fn addStaticExe(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    bpf_step: *std.Build.Step,
+    bpf_step: ?*std.Build.Step,
     sysroot: []const u8,
 ) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
@@ -141,6 +151,6 @@ fn addStaticExe(
     exe.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/lib", .{sysroot}) });
     exe.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/include", .{sysroot}) });
     exe.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
-    exe.step.dependOn(bpf_step);
+    if (bpf_step) |step| exe.step.dependOn(step);
     return exe;
 }
