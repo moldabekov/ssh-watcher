@@ -137,6 +137,8 @@ fn notifySendFallback(title: []const u8, body: []const u8, urgency: u8, target_u
         &.{ "env", bus_arg, xdg_arg, "notify-send", "-a", "ssh-watcher", "-u", u_str, title, body },
         std.heap.page_allocator,
     );
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;
     child.uid = target_uid;
     const fallback_pw = c.getpwuid(target_uid);

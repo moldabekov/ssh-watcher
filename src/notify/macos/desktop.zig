@@ -5,6 +5,15 @@ const template = @import("../../template.zig");
 const sink = @import("../sink.zig");
 
 pub fn run(ctx: *sink.SinkContext) void {
+    if (!probeOsascript()) {
+        std.log.warn("desktop: osascript unavailable or no user session; disabling desktop sink", .{});
+        return;
+    }
+    // `display notification` sourced from osascript appears in macOS Notification
+    // Center as "Script Editor", not "ssh-watcher" — this is a platform limit
+    // of the AppleScript path. Wrap with `terminal-notifier` for custom branding.
+    std.log.info("desktop: notifications will appear as 'Script Editor' in Notification Center", .{});
+
     while (!ctx.stopped()) {
         if (ctx.consumer.pop()) |ev| {
             if (!sink.shouldNotify(ctx.config, ev.event_type)) continue;
@@ -13,6 +22,25 @@ pub fn run(ctx: *sink.SinkContext) void {
             std.Thread.sleep(50 * std.time.ns_per_ms);
         }
     }
+}
+
+/// Probe once at startup: run `osascript -e "return 1"` and check exit status.
+/// Detects both missing binary and missing user-session context (LaunchDaemon
+/// without a logged-in user cannot display notifications).
+fn probeOsascript() bool {
+    var child = std.process.Child.init(
+        &.{ "osascript", "-e", "return 1" },
+        std.heap.page_allocator,
+    );
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+    child.spawn() catch return false;
+    const term = child.wait() catch return false;
+    return switch (term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
 }
 
 fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
@@ -31,14 +59,28 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
         esc_body, esc_title,
     }) catch return;
 
+    // page_allocator matches the Linux sibling; Child.init holds the allocator
+    // for argv/env duplication during spawn() and small pipe bookkeeping.
+    // Allocations are small and short-lived.
     var child = std.process.Child.init(
         &.{ "osascript", "-e", script },
         std.heap.page_allocator,
     );
+    child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;
     child.spawn() catch return;
-    _ = child.wait() catch {};
+
+    const term = child.wait() catch |err| {
+        std.log.debug("desktop: osascript wait failed: {}", .{err});
+        return;
+    };
+    switch (term) {
+        .Exited => |code| if (code != 0) {
+            std.log.debug("desktop: osascript exited with code {d}", .{code});
+        },
+        else => std.log.debug("desktop: osascript terminated abnormally: {}", .{term}),
+    }
 }
 
 /// Escape AppleScript string-literal metacharacters. {username} and IP
@@ -93,7 +135,22 @@ test "escapeAppleScript drops control chars" {
 
 test "escapeAppleScript respects buf overflow" {
     var buf: [4]u8 = undefined;
-    // Two quotes would need 4 bytes escaped; the second shouldn't overflow.
     const out = escapeAppleScript("\"\"\"", &buf);
     try std.testing.expectEqualStrings("\\\"\\\"", out);
+}
+
+test "escapeAppleScript preserves UTF-8" {
+    var buf: [64]u8 = undefined;
+    const out = escapeAppleScript("héllo \xf0\x9f\x8c\x8d", &buf);
+    try std.testing.expectEqualStrings("héllo \xf0\x9f\x8c\x8d", out);
+}
+
+test "escapeAppleScript empty input" {
+    var buf: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("", escapeAppleScript("", &buf));
+}
+
+test "escapeAppleScript exact fit" {
+    var buf: [3]u8 = undefined;
+    try std.testing.expectEqualStrings("abc", escapeAppleScript("abc", &buf));
 }

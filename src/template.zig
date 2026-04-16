@@ -3,8 +3,9 @@ const posix = std.posix;
 const SSHEvent = @import("event.zig").SSHEvent;
 
 /// Cached hostname, resolved once on first access via gethostname(2).
-/// Size comes from the target's HOST_NAME_MAX (64 on Linux, 72 on macOS)
-/// so posix.gethostname accepts the pointer on both platforms.
+/// Size comes from std.posix.HOST_NAME_MAX, which resolves via the target's
+/// libc: 64 on Linux (glibc/musl) and 72 on macOS. posix.gethostname requires
+/// the pointer to match that exact size.
 var hostname_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
 var hostname_len: usize = 0;
 var hostname_resolved: bool = false;
@@ -12,8 +13,10 @@ var hostname_resolved: bool = false;
 pub fn getHostname() []const u8 {
     if (hostname_resolved) return hostname_buf[0..hostname_len];
     const name = posix.gethostname(&hostname_buf) catch {
-        @memcpy(hostname_buf[0..7], "unknown");
-        hostname_len = 7;
+        const fallback = "unknown";
+        const fb_len = @min(fallback.len, hostname_buf.len);
+        @memcpy(hostname_buf[0..fb_len], fallback[0..fb_len]);
+        hostname_len = fb_len;
         hostname_resolved = true;
         return hostname_buf[0..hostname_len];
     };

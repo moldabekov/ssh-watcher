@@ -6,6 +6,10 @@ const is_linux = builtin.os.tag == .linux;
 const is_macos = builtin.os.tag == .macos;
 const linux = if (is_linux) std.os.linux else void;
 
+comptime {
+    if (!is_linux and !is_macos) @compileError("ssh-watcher currently supports only Linux and macOS targets");
+}
+
 pub const event = @import("event.zig");
 const ring_buffer = @import("ring_buffer.zig");
 const BroadcastBuffer = ring_buffer.BroadcastBuffer;
