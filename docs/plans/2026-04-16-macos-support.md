@@ -482,24 +482,31 @@ if (target.result.os.tag == .macos) {
 exe.root_module.link_libc = true;
 ```
 
-- [ ] **Step 2: Guard BPF compilation step**
+- [ ] **Step 2: Guard BPF compilation step and make it optional**
 
-Wrap the BPF compile command:
+The BPF compile step is Linux-only. Make it nullable so macOS targets can pass `null`:
 ```zig
-const bpf_compile = if (target.result.os.tag == .linux) blk: {
+const bpf_compile: ?*std.Build.Step = if (target.result.os.tag == .linux) blk: {
     const step = b.addSystemCommand(&.{ "sh", "-c", "test -f bpf/vmlinux.h && ..." });
     break :blk &step.step;
-} else blk: {
-    break :blk null;
-};
+} else null;
 ```
 
-And only depend on it when non-null:
+- [ ] **Step 3: Change `addExe` to accept optional BPF step**
+
+Change the `bpf_step` parameter from `*std.Build.Step` to `?*std.Build.Step`:
 ```zig
-if (bpf_compile) |step| exe.step.dependOn(step);
+fn addExe(b: *std.Build, target: ..., bpf_step: ?*std.Build.Step) ... {
+    // ... existing code ...
+    // Line 106: change exe.step.dependOn(bpf_step) to:
+    if (bpf_step) |step| exe.step.dependOn(step);
+    return exe;
+}
 ```
 
-- [ ] **Step 3: Run build on Linux**
+Existing call sites pass `&bpf_compile.step` which Zig coerces from `*Step` to `?*Step` automatically. After making `bpf_compile` nullable (Step 2), update the call sites to pass `bpf_compile` directly (it's already `?*Step`).
+
+- [ ] **Step 4: Run build on Linux**
 
 Run: `zig build test && zig build`
 Expected: Linux build unchanged
@@ -517,6 +524,8 @@ git commit -m "refactor: OS-conditional library linking in build.zig"
 
 **Files:**
 - Modify: `build.zig`
+
+Note: `addExe` already accepts `?*std.Build.Step` for bpf_step (changed in Task 6 Step 3).
 
 - [ ] **Step 1: Guard UPX with Linux check in existing release steps**
 
@@ -540,7 +549,8 @@ Add after the `release-static` step:
 ```zig
 // --- Release: macOS ---
 // zig build release-macos
-const macos_step = b.step("release-macos", "Build macOS production binary (ReleaseSmall, LTO, strip)");
+// Builds both x86_64 and aarch64 via cross-compilation. No UPX (breaks code signing).
+const macos_step = b.step("release-macos", "Build macOS production binaries (ReleaseSmall, LTO, strip)");
 inline for (.{
     .{ .arch = std.Target.Cpu.Arch.x86_64, .name = "x86_64-macos" },
     .{ .arch = std.Target.Cpu.Arch.aarch64, .name = "aarch64-macos" },
@@ -555,25 +565,12 @@ inline for (.{
 }
 ```
 
-Note: `addExe` is called with `null` for BPF step (no BPF on macOS). The `addExe` function signature needs to accept an optional BPF step (`?*std.Build.Step`).
-
-- [ ] **Step 3: Update `addExe` to accept optional BPF step**
-
-Change the `bpf_step` parameter from `*std.Build.Step` to `?*std.Build.Step`:
-```zig
-fn addExe(b: *std.Build, target: ..., bpf_step: ?*std.Build.Step) ...{
-    // ...
-    if (bpf_step) |step| exe.step.dependOn(step);
-    return exe;
-}
-```
-
-- [ ] **Step 4: Build on Linux**
+- [ ] **Step 3: Build on Linux**
 
 Run: `zig build test && zig build`
 Expected: Linux build unchanged
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add build.zig
@@ -915,11 +912,16 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
     const title = template.expand(config.title_template, ev, &title_buf) catch "SSH Event";
     const body = template.expand(config.body_template, ev, &body_buf) catch "unknown";
 
+    // Escape title and body separately (each needs its own buffer)
+    var esc_title_buf: [512]u8 = undefined;
+    var esc_body_buf: [512]u8 = undefined;
+    const esc_title = escapeAppleScript(title, &esc_title_buf);
+    const esc_body = escapeAppleScript(body, &esc_body_buf);
+
     // Build osascript command: display notification "body" with title "title"
-    var script_buf: [1024]u8 = undefined;
+    var script_buf: [1536]u8 = undefined;
     const script = std.fmt.bufPrint(&script_buf, "display notification \"{s}\" with title \"{s}\"", .{
-        escapeAppleScript(body),
-        escapeAppleScript(title),
+        esc_body, esc_title,
     }) catch return;
 
     var child = std.process.Child.init(
@@ -934,19 +936,18 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
 
 /// Escape double quotes and backslashes for AppleScript string literals.
 /// {username} comes from SSH auth data (attacker-controlled), so escaping is required.
-var escape_buf: [1024]u8 = undefined;
-fn escapeAppleScript(input: []const u8) []const u8 {
+fn escapeAppleScript(input: []const u8, buf: []u8) []const u8 {
     var i: usize = 0;
     for (input) |ch| {
-        if (i + 2 > escape_buf.len) break;
+        if (i + 2 > buf.len) break;
         if (ch == '"' or ch == '\\') {
-            escape_buf[i] = '\\';
+            buf[i] = '\\';
             i += 1;
         }
-        escape_buf[i] = ch;
+        buf[i] = ch;
         i += 1;
     }
-    return escape_buf[0..i];
+    return buf[0..i];
 }
 ```
 
@@ -1044,8 +1045,9 @@ fi
 
 case "$OS" in
   Linux)
+    BINDIR="$PREFIX/bin"
     SYSTEMDDIR="${SYSTEMDDIR:-/usr/lib/systemd/system}"
-    install -Dm755 "$BIN_SRC" "$DESTDIR$PREFIX/bin/ssh-watcher"
+    install -Dm755 "$BIN_SRC" "$DESTDIR$BINDIR/ssh-watcher"
     install -Dm644 config/ssh-watcher.toml "$DESTDIR$SYSCONFDIR/ssh-watcher/config.toml"
     install -Dm644 config/ssh-watcher.service "$DESTDIR$SYSTEMDDIR/ssh-watcher.service"
     if [ -z "$DESTDIR" ] && command -v systemctl >/dev/null 2>&1; then
@@ -1073,7 +1075,7 @@ case "$OS" in
 esac
 
 echo "Installed ssh-watcher"
-echo "  Binary: $DESTDIR$PREFIX/bin/ssh-watcher"
+echo "  Binary: $DESTDIR$BINDIR/ssh-watcher"
 echo "  Config: $DESTDIR$SYSCONFDIR/ssh-watcher/config.toml"
 ```
 
@@ -1096,13 +1098,12 @@ git commit -m "feat: add launchd plist, platform-aware install.sh"
 
 Add after the `build-dynamic` job in `release.yml`:
 
+The `release-macos` build step cross-compiles both x86_64 and aarch64 in one invocation, so only one CI job is needed. Use the runner's native Zig (aarch64 on `macos-latest`).
+
 ```yaml
   build-macos:
-    name: macOS build (${{ matrix.arch }})
+    name: macOS build (x86_64 + aarch64)
     runs-on: macos-latest
-    strategy:
-      matrix:
-        arch: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v4
 
@@ -1110,25 +1111,33 @@ Add after the `build-dynamic` job in `release.yml`:
         id: cache-zig-macos
         uses: actions/cache@v4
         with:
-          path: zig-${{ matrix.arch }}-macos-${{ env.ZIG_VERSION }}
-          key: zig-macos-${{ matrix.arch }}-${{ env.ZIG_VERSION }}
+          path: zig-aarch64-macos-${{ env.ZIG_VERSION }}
+          key: zig-macos-aarch64-${{ env.ZIG_VERSION }}
       - name: Install Zig
         if: steps.cache-zig-macos.outputs.cache-hit != 'true'
-        run: curl -L "https://ziglang.org/download/$ZIG_VERSION/zig-${{ matrix.arch }}-macos-$ZIG_VERSION.tar.xz" | tar xJ
+        run: curl -L "https://ziglang.org/download/$ZIG_VERSION/zig-aarch64-macos-$ZIG_VERSION.tar.xz" | tar xJ
       - name: Add Zig to PATH
-        run: echo "$PWD/zig-${{ matrix.arch }}-macos-$ZIG_VERSION" >> "$GITHUB_PATH"
+        run: echo "$PWD/zig-aarch64-macos-$ZIG_VERSION" >> "$GITHUB_PATH"
 
-      - name: Build
+      - name: Build both architectures
         run: zig build release-macos
 
       - name: Ad-hoc codesign
-        run: codesign --sign - --force zig-out/release/ssh-watcher-${{ matrix.arch }}-macos
+        run: |
+          codesign --sign - --force zig-out/release/ssh-watcher-x86_64-macos
+          codesign --sign - --force zig-out/release/ssh-watcher-aarch64-macos
 
-      - name: Upload artifact
+      - name: Upload x86_64
         uses: actions/upload-artifact@v4
         with:
-          name: ssh-watcher-${{ matrix.arch }}-macos
-          path: zig-out/release/ssh-watcher-${{ matrix.arch }}-macos
+          name: ssh-watcher-x86_64-macos
+          path: zig-out/release/ssh-watcher-x86_64-macos
+
+      - name: Upload aarch64
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-watcher-aarch64-macos
+          path: zig-out/release/ssh-watcher-aarch64-macos
 ```
 
 Update the `release` job's `needs` to include `build-macos`, and add macOS artifacts to the release files.
