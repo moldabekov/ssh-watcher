@@ -60,6 +60,8 @@ fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
     defer dir.close();
     var iter = dir.iterate();
 
+    // Notify ALL active desktop sessions, not just the first.
+    // Local users should see SSH events regardless of who connected.
     while (iter.next() catch null) |entry| {
         if (entry.kind != .directory) continue;
         const uid = std.fmt.parseInt(std.posix.uid_t, entry.name, 10) catch continue;
@@ -69,16 +71,15 @@ fn sendToSessions(title: []const u8, body: []const u8, urgency: u8) void {
         if (our_uid == uid) {
             if (sendViaDbus(addr, title, body, urgency)) {
                 std.log.debug("desktop: sent via dbus-direct (uid={d})\n", .{uid});
-                return;
+                continue;
             }
         } else {
             if (sendViaDbusFork(addr, uid, title, body, urgency)) {
                 std.log.debug("desktop: sent via dbus-fork (uid={d})\n", .{uid});
-                return;
+                continue;
             }
             std.log.debug("desktop: fork failed, falling back to notify-send (uid={d})\n", .{uid});
             notifySendFallback(title, body, urgency, uid, entry.name);
-            return;
         }
     }
 }
