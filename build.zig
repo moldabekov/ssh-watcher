@@ -39,10 +39,15 @@ pub fn build(b: *std.Build) void {
             .dest_dir = .{ .override = .{ .custom = "release" } },
             .dest_sub_path = "ssh-watcher-x86_64-linux",
         });
-        const upx = b.addSystemCommand(&.{ "upx", "--best", "--lzma" });
-        upx.addArg(b.getInstallPath(.{ .custom = "release" }, "ssh-watcher-x86_64-linux"));
-        upx.step.dependOn(&install.step);
-        release_step.dependOn(&upx.step);
+        // UPX is Linux-only; breaks macOS code signing
+        if (resolved.result.os.tag == .linux) {
+            const upx = b.addSystemCommand(&.{ "upx", "--best", "--lzma" });
+            upx.addArg(b.getInstallPath(.{ .custom = "release" }, "ssh-watcher-x86_64-linux"));
+            upx.step.dependOn(&install.step);
+            release_step.dependOn(&upx.step);
+        } else {
+            release_step.dependOn(&install.step);
+        }
     }
 
     // --- Release: fully static (musl) ---
@@ -65,11 +70,29 @@ pub fn build(b: *std.Build) void {
                 .dest_dir = .{ .override = .{ .custom = "release" } },
                 .dest_sub_path = "ssh-watcher-" ++ rt.name,
             });
+            // UPX is Linux-only; static build is always Linux so always apply
             const upx = b.addSystemCommand(&.{ "upx", "--best", "--lzma" });
             upx.addArg(b.getInstallPath(.{ .custom = "release" }, "ssh-watcher-" ++ rt.name));
             upx.step.dependOn(&install.step);
             static_step.dependOn(&upx.step);
         }
+    }
+
+    // --- Release: macOS (x86_64 + aarch64) ---
+    // zig build release-macos
+    // Cross-compiles both architectures. No UPX (breaks macOS code signing).
+    const macos_step = b.step("release-macos", "Build macOS production binaries (ReleaseSmall, LTO, strip)");
+    inline for (.{
+        .{ .arch = std.Target.Cpu.Arch.x86_64, .name = "x86_64-macos" },
+        .{ .arch = std.Target.Cpu.Arch.aarch64, .name = "aarch64-macos" },
+    }) |rt| {
+        const resolved = b.resolveTargetQuery(.{ .cpu_arch = rt.arch, .os_tag = .macos });
+        const rel_exe = addExe(b, resolved, .ReleaseSmall, true, true, null);
+        const install = b.addInstallArtifact(rel_exe, .{
+            .dest_dir = .{ .override = .{ .custom = "release" } },
+            .dest_sub_path = "ssh-watcher-" ++ rt.name,
+        });
+        macos_step.dependOn(&install.step);
     }
 }
 
