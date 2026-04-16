@@ -7,73 +7,78 @@ const c = @cImport({
     @cInclude("utmpx.h");
 });
 
-const MAX_SESSIONS = 64;
 const POLL_INTERVAL_NS = 2 * std.time.ns_per_s;
+const SHUTDOWN_CHECK_NS = 250 * std.time.ns_per_ms;
 
 pub fn run(ctx: *Context) void {
-    var known: [MAX_SESSIONS]u32 = [_]u32{0} ** MAX_SESSIONS;
-    var known_count: usize = 0;
+    runImpl(ctx) catch |err| {
+        std.log.err("utmpx backend: {}", .{err});
+    };
+}
 
+fn runImpl(ctx: *Context) !void {
+    var known = std.AutoHashMap(u32, void).init(std.heap.page_allocator);
+    defer known.deinit();
+
+    scan(&known, ctx, true);
     while (!ctx.stopped()) {
-        var current: [MAX_SESSIONS]u32 = [_]u32{0} ** MAX_SESSIONS;
-        var current_count: usize = 0;
+        // Chunked sleep so shutdown latency stays well under POLL_INTERVAL_NS.
+        var waited: u64 = 0;
+        while (waited < POLL_INTERVAL_NS and !ctx.stopped()) {
+            std.Thread.sleep(SHUTDOWN_CHECK_NS);
+            waited += SHUTDOWN_CHECK_NS;
+        }
+        if (ctx.stopped()) break;
+        scan(&known, ctx, false);
+    }
+}
 
-        c.setutxent();
-        while (c.getutxent()) |entry| {
-            if (entry.*.ut_type != c.USER_PROCESS) continue;
-            const host = std.mem.sliceTo(&entry.*.ut_host, 0);
-            if (host.len == 0) continue; // local console login, not remote SSH
+fn scan(known: *std.AutoHashMap(u32, void), ctx: *Context, initial: bool) void {
+    var current = std.AutoHashMap(u32, void).init(std.heap.page_allocator);
+    defer current.deinit();
 
-            const pid: u32 = @intCast(entry.*.ut_pid);
-            if (current_count < MAX_SESSIONS) {
-                current[current_count] = pid;
-                current_count += 1;
-            }
+    c.setutxent();
+    while (c.getutxent()) |entry| {
+        if (entry.*.ut_type != c.USER_PROCESS) continue;
+        const host = std.mem.sliceTo(&entry.*.ut_host, 0);
+        if (host.len == 0) continue; // local console login without host field
 
-            var already_known = false;
-            for (known[0..known_count]) |k| {
-                if (k == pid) {
-                    already_known = true;
-                    break;
-                }
-            }
-            if (already_known) continue;
+        const pid: u32 = @intCast(entry.*.ut_pid);
+        current.put(pid, {}) catch continue;
 
+        if (known.contains(pid)) continue;
+        known.put(pid, {}) catch continue;
+        if (initial) continue;
+
+        var ev = SSHEvent{ .backend = .utmpx_bsd };
+        ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
+        ev.event_type = .auth_success;
+        ev.pid = pid;
+        ev.session_id = pid;
+        ev.setUsername(std.mem.sliceTo(&entry.*.ut_user, 0));
+        // ut_host may be a hostname or dotted-quad. parseIPInto tolerates
+        // non-numeric input by writing 0.0.0.0 (harmless fallback).
+        ip.parseIPInto(host, &ev.source_ip);
+        ctx.emit(ev);
+    }
+    c.endutxent();
+
+    // Detect disconnects: pids we tracked that are no longer in the database.
+    var to_remove: std.ArrayList(u32) = .empty;
+    defer to_remove.deinit(std.heap.page_allocator);
+    var iter = known.iterator();
+    while (iter.next()) |e| {
+        const pid = e.key_ptr.*;
+        if (current.contains(pid)) continue;
+        if (!initial) {
             var ev = SSHEvent{ .backend = .utmpx_bsd };
-            ev.event_type = .auth_success;
+            ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
+            ev.event_type = .disconnect;
             ev.pid = pid;
             ev.session_id = pid;
-            ev.setUsername(std.mem.sliceTo(&entry.*.ut_user, 0));
-            ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
-            // ut_host may be a hostname or dotted-quad. parseIPInto handles
-            // non-numeric input by producing 0.0.0.0 (harmless fallback).
-            ip.parseIPInto(host, &ev.source_ip);
             ctx.emit(ev);
         }
-        c.endutxent();
-
-        // Detect disconnects: pids we saw before but are gone now.
-        for (known[0..known_count]) |k| {
-            var still_here = false;
-            for (current[0..current_count]) |cur_pid| {
-                if (cur_pid == k) {
-                    still_here = true;
-                    break;
-                }
-            }
-            if (still_here) continue;
-
-            var ev = SSHEvent{ .backend = .utmpx_bsd };
-            ev.event_type = .disconnect;
-            ev.pid = k;
-            ev.session_id = k;
-            ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
-            ctx.emit(ev);
-        }
-
-        known = current;
-        known_count = current_count;
-
-        std.Thread.sleep(POLL_INTERVAL_NS);
+        to_remove.append(std.heap.page_allocator, pid) catch {};
     }
+    for (to_remove.items) |pid| _ = known.remove(pid);
 }
