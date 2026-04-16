@@ -14,7 +14,7 @@ const journal = @import("detect/linux/journal.zig");
 const ebpf = @import("detect/linux/ebpf.zig");
 const utmp_mod = @import("detect/linux/utmp.zig");
 const logwriter = @import("notify/logwriter.zig");
-const desktop = @import("notify/desktop.zig");
+const desktop = @import("notify/linux/desktop.zig");
 const webhook = @import("notify/webhook.zig");
 const sink_mod = @import("notify/sink.zig");
 
@@ -266,7 +266,7 @@ test {
     _ = @import("session.zig");
     _ = @import("notify/sink.zig");
     _ = @import("notify/logwriter.zig");
-    _ = @import("dbus.zig");
-    _ = @import("notify/desktop.zig");
+    _ = @import("notify/linux/dbus.zig");
+    _ = @import("notify/linux/desktop.zig");
     _ = @import("notify/webhook.zig");
 }

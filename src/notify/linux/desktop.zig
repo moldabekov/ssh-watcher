@@ -1,11 +1,11 @@
 const std = @import("std");
-const SSHEvent = @import("../event.zig").SSHEvent;
-const EventType = @import("../event.zig").EventType;
-const Config = @import("../config.zig").Config;
-const Urgency = @import("../config.zig").Urgency;
-const dbus = @import("../dbus.zig");
-const template = @import("../template.zig");
-const sink = @import("sink.zig");
+const SSHEvent = @import("../../event.zig").SSHEvent;
+const EventType = @import("../../event.zig").EventType;
+const Config = @import("../../config.zig").Config;
+const Urgency = @import("../../config.zig").Urgency;
+const dbus = @import("dbus.zig");
+const template = @import("../../template.zig");
+const sink = @import("../sink.zig");
 
 const c = @cImport({ @cInclude("pwd.h"); });
 
