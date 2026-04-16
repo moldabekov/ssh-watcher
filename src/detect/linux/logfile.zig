@@ -1,10 +1,10 @@
 const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
-const SSHEvent = @import("../event.zig").SSHEvent;
-const Context = @import("backend.zig").Context;
-const patterns = @import("patterns.zig");
-const ip = @import("ip.zig");
+const SSHEvent = @import("../../event.zig").SSHEvent;
+const Context = @import("../backend.zig").Context;
+const patterns = @import("../patterns.zig");
+const ip = @import("../ip.zig");
 
 const log_paths = [_][]const u8{ "/var/log/auth.log", "/var/log/secure" };
 

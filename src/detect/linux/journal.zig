@@ -1,8 +1,8 @@
 const std = @import("std");
-const SSHEvent = @import("../event.zig").SSHEvent;
-const Context = @import("backend.zig").Context;
-const patterns = @import("patterns.zig");
-const ip = @import("ip.zig");
+const SSHEvent = @import("../../event.zig").SSHEvent;
+const Context = @import("../backend.zig").Context;
+const patterns = @import("../patterns.zig");
+const ip = @import("../ip.zig");
 
 const c = @cImport({
     @cInclude("systemd/sd-journal.h");

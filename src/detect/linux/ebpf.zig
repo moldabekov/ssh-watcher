@@ -1,7 +1,7 @@
 const std = @import("std");
-const SSHEvent = @import("../event.zig").SSHEvent;
-const EventType = @import("../event.zig").EventType;
-const Context = @import("backend.zig").Context;
+const SSHEvent = @import("../../event.zig").SSHEvent;
+const EventType = @import("../../event.zig").EventType;
+const Context = @import("../backend.zig").Context;
 
 const c = @cImport({
     @cInclude("bpf/libbpf.h");
@@ -59,7 +59,7 @@ var recent_conns: [MAX_CONNS]ConnInfo = [_]ConnInfo{.{
 var conn_count: usize = 0;
 
 /// Embedded BPF ELF object — compiled at build time by clang.
-const bpf_elf = @embedFile("ssh_monitor.bpf.o");
+const bpf_elf = @embedFile("../ssh_monitor.bpf.o");
 
 pub fn run(ctx: *Context) void {
     runImpl(ctx) catch |err| {

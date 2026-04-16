@@ -1,7 +1,7 @@
 const std = @import("std");
-const SSHEvent = @import("../event.zig").SSHEvent;
-const Context = @import("backend.zig").Context;
-const ip = @import("ip.zig");
+const SSHEvent = @import("../../event.zig").SSHEvent;
+const Context = @import("../backend.zig").Context;
+const ip = @import("../ip.zig");
 
 // Native utmp definition — avoids @cImport so musl targets work.
 // Layout matches the Linux ABI (glibc/musl compatible, see utmp.h).
