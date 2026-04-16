@@ -30,7 +30,7 @@ A Linux and macOS daemon that monitors incoming SSH connections and alerts you t
 - **Configurable events** – choose which events to notify on (connection, auth success/failure, disconnect)
 - **Configurable urgency** – set notification urgency per event type
 - **Notification templates** – customize title and body with `{event_type}`, `{username}`, `{source_ip}`, etc.
-- **Systemd integration** – `sd_notify` readiness, `SIGHUP` config reload, `SIGUSR1` status dump
+- **Service integration** – systemd `sd_notify` readiness (Linux), `SIGHUP` config reload, `SIGUSR1` status dump (both OSes)
 
 ## Download
 
@@ -125,18 +125,26 @@ sudo systemctl enable --now ssh-watcher
 ```bash
 zig build release-macos
 sudo ./install.sh
-sudo launchctl load /Library/LaunchDaemons/com.moldabekov.ssh-watcher.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.moldabekov.ssh-watcher.plist
 ```
 
 `install.sh` detects `uname -s` and picks per-platform targets:
 
 - **Linux**: binary to `$PREFIX/bin`, config to `$SYSCONFDIR/ssh-watcher`, systemd unit to `$SYSTEMDDIR`; reloads systemd if live.
-- **macOS**: binary to `/usr/local/bin`, config to `/etc/ssh-watcher`, launchd plist to `/Library/LaunchDaemons`; ad-hoc codesigns the binary so Gatekeeper accepts it.
+- **macOS**: binary to `$BINDIR` (default `/usr/local/bin`), config to `$SYSCONFDIR/ssh-watcher`, launchd plist to `/Library/LaunchDaemons` with `ProgramArguments` rewritten to match the actual `$BINDIR`; ad-hoc codesigns the binary (mandatory on Apple Silicon — unsigned Mach-O binaries are killed by the kernel at exec time).
+
+If you downloaded the binary with Safari rather than `curl`, remove the quarantine attribute before running:
+
+```bash
+xattr -d com.apple.quarantine ssh-watcher-aarch64-macos
+```
+
+`curl` downloads are not tagged with `com.apple.quarantine`, so CI-built artifacts pulled via `curl` / `gh release download` need no xattr cleanup.
 
 ### macOS security notes
 
 - **SIP (System Integrity Protection)** does not block `log stream` or `utmpx`, but accessing `/dev/auditpipe` requires root and SIP-permitted entitlements (the OpenBSM backend ships as a stub for this reason).
-- **TCC (Transparency, Consent, Control)** — a LaunchDaemon has no user session, so `osascript display notification` requires a logged-in Aqua user. If no one is logged in, the desktop sink logs a warning and stays idle.
+- **LaunchDaemon vs user session** — a LaunchDaemon running as root lives in the system domain with no bootstrap user session. `osascript display notification` ends up with no `UIServer` to talk to, so the macOS desktop sink is **expected to be silent in the default LaunchDaemon configuration**. Reliable desktop notifications require a separate LaunchAgent installation per-user (not yet shipped) or routing the call through `launchctl asuser $(stat -f %u /dev/console) osascript ...`. Log and webhook sinks work normally.
 - **Gatekeeper** — binaries built by the release workflow are ad-hoc signed (`codesign --sign -`). This avoids the "cannot be opened because the developer cannot be verified" warning on first run. Full notarization is out of scope.
 
 ## Configuration
@@ -231,21 +239,26 @@ sudo kill -USR1 $(pidof ssh-watcher)
 
 ### launchd service (macOS)
 
+macOS 10.10+ uses `launchctl bootstrap` / `bootout` / `kickstart`; the older `load` / `unload` commands still work but are deprecated.
+
 ```bash
 # Load and start
-sudo launchctl load /Library/LaunchDaemons/com.moldabekov.ssh-watcher.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.moldabekov.ssh-watcher.plist
+
+# Restart (e.g. after editing the config)
+sudo launchctl kickstart -k system/com.moldabekov.ssh-watcher
 
 # View logs
 tail -f /var/log/ssh-watcher.out /var/log/ssh-watcher.err
 
-# Reload config
-sudo launchctl kill SIGHUP system/com.moldabekov.ssh-watcher
+# Reload config (without restart)
+sudo launchctl kill HUP system/com.moldabekov.ssh-watcher
 
 # Status dump
-sudo launchctl kill SIGUSR1 system/com.moldabekov.ssh-watcher
+sudo launchctl kill USR1 system/com.moldabekov.ssh-watcher
 
 # Stop and unload
-sudo launchctl unload /Library/LaunchDaemons/com.moldabekov.ssh-watcher.plist
+sudo launchctl bootout system/com.moldabekov.ssh-watcher
 ```
 
 ### Signals

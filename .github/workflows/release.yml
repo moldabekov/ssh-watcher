@@ -218,10 +218,14 @@ jobs:
 
       - name: Verify binaries
         run: |
+          set -e
           for bin in zig-out/release/ssh-watcher-x86_64-macos zig-out/release/ssh-watcher-aarch64-macos; do
+            echo "=== $bin ==="
             file "$bin"
             ls -lh "$bin"
-            codesign --verify --verbose "$bin" || true
+            codesign -dvvv "$bin"
+            codesign --verify --verbose "$bin"
+            otool -L "$bin"
           done
 
       - name: Upload x86_64 artifact

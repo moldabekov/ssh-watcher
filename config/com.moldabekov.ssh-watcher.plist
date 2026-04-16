@@ -30,8 +30,12 @@
     <key>StandardErrorPath</key>
     <string>/var/log/ssh-watcher.err</string>
 
-    <!-- Let the service survive macOS session transitions. -->
+    <!-- Background QoS so ssh-watcher yields CPU/memory to interactive workloads. -->
     <key>ProcessType</key>
     <string>Background</string>
+
+    <!-- Bound graceful-shutdown time so launchctl bootout doesn't hang. -->
+    <key>ExitTimeOut</key>
+    <integer>10</integer>
 </dict>
 </plist>
