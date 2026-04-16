@@ -1,6 +1,6 @@
 .{
     .name = .ssh_watcher,
-    .version = "0.1.0",
+    .version = "0.4.0",
     .fingerprint = 0x55674081d68a5d6c,
     .minimum_zig_version = "0.15.2",
     .dependencies = .{},

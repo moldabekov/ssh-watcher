@@ -129,7 +129,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8) ParseError!Confi
             const eq_pos = std.mem.indexOfScalar(u8, line, '=') orelse return error.InvalidFormat;
             const key = std.mem.trim(u8, line[0..eq_pos], " \t");
             const raw_val = std.mem.trim(u8, line[eq_pos + 1 ..], " \t");
-            const val = stripQuotes(raw_val);
+            const val = stripQuotes(stripInlineComment(raw_val));
             try applyValue(&config, section, &endpoints, key, val);
         }
     }
@@ -181,6 +181,25 @@ fn applyValue(config: *Config, section: Section, endpoints: *std.ArrayList(Webho
         },
         .root => {},
     }
+}
+
+/// Strip inline TOML comments: `value # comment` → `value`
+/// Respects quoted strings: `"val # not comment"` is preserved.
+fn stripInlineComment(s: []const u8) []const u8 {
+    if (s.len == 0) return s;
+    // If value is quoted, find the closing quote first
+    if (s[0] == '"' or s[0] == '\'') {
+        const quote = s[0];
+        if (std.mem.indexOfScalarPos(u8, s, 1, quote)) |close| {
+            return std.mem.trim(u8, s[0 .. close + 1], " \t");
+        }
+        return s; // unclosed quote, return as-is
+    }
+    // Unquoted value: cut at first #
+    if (std.mem.indexOfScalar(u8, s, '#')) |hash| {
+        return std.mem.trim(u8, s[0..hash], " \t");
+    }
+    return s;
 }
 
 fn stripQuotes(s: []const u8) []const u8 {
