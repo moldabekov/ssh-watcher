@@ -22,7 +22,7 @@ const logstream = if (is_macos) @import("detect/macos/logstream.zig") else void;
 const utmpx = if (is_macos) @import("detect/macos/utmpx.zig") else void;
 const audit_bsm = if (is_macos) @import("detect/macos/audit_bsm.zig") else void;
 const logwriter = @import("notify/logwriter.zig");
-const desktop = if (is_linux) @import("notify/linux/desktop.zig") else void;
+const desktop = if (is_linux) @import("notify/linux/desktop.zig") else if (is_macos) @import("notify/macos/desktop.zig") else void;
 const webhook = @import("notify/webhook.zig");
 const sink_mod = @import("notify/sink.zig");
 
@@ -291,5 +291,6 @@ test {
         _ = @import("detect/macos/logstream.zig");
         _ = @import("detect/macos/utmpx.zig");
         _ = @import("detect/macos/audit_bsm.zig");
+        _ = @import("notify/macos/desktop.zig");
     }
 }
