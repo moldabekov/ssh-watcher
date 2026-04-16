@@ -9,17 +9,20 @@
 ![GitHub License](https://img.shields.io/github/license/moldabekov/ssh-watcher)
 ![GitHub repo size](https://img.shields.io/github/repo-size/moldabekov/ssh-watcher)
 
-A Linux daemon that monitors incoming SSH connections and alerts you through desktop notifications, log files, and webhooks. Written in Zig with an eBPF-first detection approach.
+A Linux and macOS daemon that monitors incoming SSH connections and alerts you through desktop notifications, log files, and webhooks. Written in Zig with an eBPF-first detection approach on Linux and an `os_log`-stream approach on macOS.
 
 ## Features
 
-- **4 detection backends** with automatic selection:
-  - **eBPF** (preferred) – kernel tracepoints, zero sshd configuration, lowest overhead
-  - **systemd journal** – parses sshd log entries in real time
-  - **log file tailing** – inotify-based watching of `/var/log/secure` or `/var/log/auth.log`
-  - **utmp** – polls login session records
+- **7 detection backends** with automatic per-OS selection:
+  - **Linux: eBPF** (preferred) – kernel tracepoints, zero sshd configuration, lowest overhead
+  - **Linux: systemd journal** – parses sshd log entries in real time
+  - **Linux: log file tailing** – inotify-based watching of `/var/log/secure` or `/var/log/auth.log`
+  - **Linux: utmp** – polls login session records
+  - **macOS: log stream** (preferred) – subscribes to `os_log`-native sshd messages via the `log` command
+  - **macOS: OpenBSM audit** – `/dev/auditpipe` consumer (stub; full impl pending API verification)
+  - **macOS: utmpx** – polls the BSD utmpx database (deprecated on macOS 10.9+ but kept as fallback)
 - **3 notification sinks**, each in its own thread:
-  - **Desktop notifications** via D-Bus with fork+setuid for root-to-user delivery
+  - **Desktop notifications** – D-Bus with fork+setuid for root-to-user delivery on Linux; `osascript display notification` on macOS
   - **JSON log file** – one event per line, includes detection backend, `jq`-friendly
   - **Webhooks** – HTTP POST to Slack, Discord, Telegram, or any endpoint with retry
 - **Human-readable notification titles** – "SSH: Authentication Successful", "SSH: Connection Disconnected"
@@ -41,10 +44,12 @@ Pre-built binaries and packages from [GitHub Releases](https://github.com/moldab
 | `ssh-watcher-VERSION-1.x86_64.rpm` | Fedora/RHEL package | systemd-libs, libbpf |
 | `ssh-watcher-x86_64-linux-static` | Static binary (musl) | None |
 | `ssh-watcher-x86_64-linux` | Dynamic binary (glibc) | libsystemd, libbpf |
+| `ssh-watcher-x86_64-macos` | Intel macOS binary (ad-hoc signed) | macOS 11+ |
+| `ssh-watcher-aarch64-macos` | Apple Silicon macOS binary (ad-hoc signed) | macOS 11+ |
 
 ## Requirements
 
-### Build
+### Build (Linux)
 
 - Zig 0.15.2+
 - clang (for BPF compilation)
@@ -53,11 +58,23 @@ Pre-built binaries and packages from [GitHub Releases](https://github.com/moldab
 - bpftool (for generating `vmlinux.h`, optional – pre-compiled BPF object included)
 - upx (for `zig build release` / `zig build release-static` – binary compression)
 
-### Runtime
+### Build (macOS)
+
+- Zig 0.15.2+
+- Xcode Command Line Tools (provides `libbsm` for the OpenBSM backend and the macOS SDK headers for `utmpx.h`)
+- No BPF toolchain required – macOS targets skip the BPF compile step
+
+### Runtime (Linux)
 
 - Linux kernel 5.8+ with BTF (`/sys/kernel/btf/vmlinux`) for eBPF backend
 - systemd for journal backend
 - `/var/log/secure` or `/var/log/auth.log` for logfile backend
+
+### Runtime (macOS)
+
+- macOS 11+ (log stream, OpenBSM, utmpx)
+- Root privileges (required for `log stream --process sshd` and `/dev/auditpipe`)
+- A logged-in user session for `osascript` desktop notifications (LaunchDaemons have no session by default)
 
 ## Building
 
@@ -76,6 +93,9 @@ zig build release
 
 # Fully static musl build (needs musl sysroot with static libs)
 zig build release-static -Dmusl-sysroot=/path/to/sysroot
+
+# macOS release (both x86_64 and aarch64 in one invocation, no UPX)
+zig build release-macos
 ```
 
 ## Installation
@@ -92,7 +112,7 @@ sudo rpm -i ssh-watcher-*.x86_64.rpm
 sudo systemctl enable --now ssh-watcher
 ```
 
-### From source
+### From source (Linux)
 
 ```bash
 zig build
@@ -100,15 +120,36 @@ sudo ./install.sh
 sudo systemctl enable --now ssh-watcher
 ```
 
+### From source (macOS)
+
+```bash
+zig build release-macos
+sudo ./install.sh
+sudo launchctl load /Library/LaunchDaemons/com.moldabekov.ssh-watcher.plist
+```
+
+`install.sh` detects `uname -s` and picks per-platform targets:
+
+- **Linux**: binary to `$PREFIX/bin`, config to `$SYSCONFDIR/ssh-watcher`, systemd unit to `$SYSTEMDDIR`; reloads systemd if live.
+- **macOS**: binary to `/usr/local/bin`, config to `/etc/ssh-watcher`, launchd plist to `/Library/LaunchDaemons`; ad-hoc codesigns the binary so Gatekeeper accepts it.
+
+### macOS security notes
+
+- **SIP (System Integrity Protection)** does not block `log stream` or `utmpx`, but accessing `/dev/auditpipe` requires root and SIP-permitted entitlements (the OpenBSM backend ships as a stub for this reason).
+- **TCC (Transparency, Consent, Control)** — a LaunchDaemon has no user session, so `osascript display notification` requires a logged-in Aqua user. If no one is logged in, the desktop sink logs a warning and stays idle.
+- **Gatekeeper** — binaries built by the release workflow are ad-hoc signed (`codesign --sign -`). This avoids the "cannot be opened because the developer cannot be verified" warning on first run. Full notarization is out of scope.
+
 ## Configuration
 
 System-wide config at `/etc/ssh-watcher/config.toml`, per-user overrides at `~/.config/ssh-watcher/config.toml`.
 
 ```toml
 [detection]
-backend = "auto"            # "auto", "ebpf", "journal", "logfile", "utmp"
+# Linux values: "auto", "ebpf", "journal", "logfile", "utmp"
+# macOS values: "auto", "logstream", "audit_bsm", "utmpx_bsd"
+backend = "auto"
 ssh_port = 22
-auth_timeout_seconds = 30   # for logfile/journal auth_failure inference
+auth_timeout_seconds = 30   # for logfile/journal/logstream/utmpx auth_failure inference
 
 [events]
 notify_on_connection = false
@@ -145,7 +186,9 @@ payload_template = '{"text": "SSH {event_type}: {username} from {source_ip} on {
 
 ### Backend selection
 
-In `auto` mode, the daemon probes backends in priority order and selects the best available:
+In `auto` mode, the daemon probes backends in priority order and selects the best available. Platform-specific.
+
+**Linux:**
 
 | Priority | Backend | Requirements |
 |----------|---------|-------------|
@@ -153,6 +196,14 @@ In `auto` mode, the daemon probes backends in priority order and selects the bes
 | 2 | journal | systemd |
 | 3 | logfile | `/var/log/secure` or `/var/log/auth.log` |
 | 4 | utmp | Always available (login events only) |
+
+**macOS:**
+
+| Priority | Backend | Requirements |
+|----------|---------|-------------|
+| 1 | logstream | `/usr/bin/log` (shipped with every macOS install) |
+| 2 | audit_bsm | `/dev/auditpipe` + root + SIP-compatible (stub impl) |
+| 3 | utmpx_bsd | Always available (deprecated on macOS 10.9+, may emit no events) |
 
 ## Usage
 
@@ -162,7 +213,7 @@ In `auto` mode, the daemon probes backends in priority order and selects the bes
 sudo ssh-watcher
 ```
 
-### Systemd service
+### Systemd service (Linux)
 
 ```bash
 sudo systemctl start ssh-watcher
@@ -176,6 +227,25 @@ sudo systemctl reload ssh-watcher
 
 # Status dump
 sudo kill -USR1 $(pidof ssh-watcher)
+```
+
+### launchd service (macOS)
+
+```bash
+# Load and start
+sudo launchctl load /Library/LaunchDaemons/com.moldabekov.ssh-watcher.plist
+
+# View logs
+tail -f /var/log/ssh-watcher.out /var/log/ssh-watcher.err
+
+# Reload config
+sudo launchctl kill SIGHUP system/com.moldabekov.ssh-watcher
+
+# Status dump
+sudo launchctl kill SIGUSR1 system/com.moldabekov.ssh-watcher
+
+# Stop and unload
+sudo launchctl unload /Library/LaunchDaemons/com.moldabekov.ssh-watcher.plist
 ```
 
 ### Signals
@@ -260,41 +330,51 @@ cat /var/log/ssh-watcher.log | jq 'select(.backend == "ebpf")'
 
 ```
 ssh-watcher/
-├── build.zig                  # Build script (dev, release, release-static)
+├── build.zig                  # Build script (dev, release, release-static, release-macos)
 ├── .github/workflows/
-│   └── release.yml            # CI: static (Alpine/musl) + dynamic (Ubuntu/glibc)
-├── bpf/
-│   ├── ssh_monitor.bpf.c     # BPF tracepoints (C)
+│   └── release.yml            # CI: static (Alpine/musl) + dynamic (Ubuntu/glibc) + macOS (universal)
+├── bpf/                       # Linux-only
+│   ├── ssh_monitor.bpf.c      # BPF tracepoints (C)
 │   ├── ssh_monitor.h          # Shared event struct
 │   └── vmlinux.h              # Generated kernel BTF header (gitignored)
 ├── src/
-│   ├── main.zig               # Entry point, signal handling, main loop
-│   ├── event.zig              # SSHEvent struct, Backend enum
+│   ├── main.zig               # Entry point, signal handling, main loop (comptime platform guards)
+│   ├── event.zig              # SSHEvent struct, Backend enum (Linux + macOS values)
 │   ├── ring_buffer.zig        # Broadcast ring buffer (lock-free, atomic)
 │   ├── config.zig             # TOML parser, layered config
 │   ├── template.zig           # Notification templates with display names
 │   ├── session.zig            # Session correlation table
-│   ├── dbus.zig               # Minimal D-Bus wire protocol client
 │   ├── detect/
-│   │   ├── backend.zig        # Backend interface and probing
-│   │   ├── ebpf.zig           # eBPF backend (libbpf)
-│   │   ├── journal.zig        # systemd journal backend
-│   │   ├── logfile.zig        # Log file tailing backend
-│   │   ├── utmp.zig           # utmp polling backend (native struct)
-│   │   └── patterns.zig       # sshd log pattern matcher
+│   │   ├── backend.zig        # Backend interface and platform-aware probing
+│   │   ├── ip.zig             # Shared IPv4 parser (used by both OS backends)
+│   │   ├── patterns.zig       # sshd log pattern matcher (shared)
+│   │   ├── linux/
+│   │   │   ├── ebpf.zig       # eBPF backend (libbpf)
+│   │   │   ├── journal.zig    # systemd journal backend
+│   │   │   ├── logfile.zig    # Log file tailing backend (inotify)
+│   │   │   └── utmp.zig       # utmp polling backend (native struct)
+│   │   └── macos/
+│   │       ├── logstream.zig  # `log stream --process sshd` consumer
+│   │       ├── audit_bsm.zig  # OpenBSM audit backend (stub, API pending)
+│   │       └── utmpx.zig      # utmpx polling backend (@cImport utmpx.h)
 │   └── notify/
 │       ├── sink.zig           # Sink interface
-│       ├── desktop.zig        # Desktop notifications (D-Bus + fork+setuid)
-│       ├── logwriter.zig      # JSON log writer
-│       └── webhook.zig        # Webhook POST with retry
+│       ├── logwriter.zig      # JSON log writer (shared)
+│       ├── webhook.zig        # Webhook POST with retry (shared)
+│       ├── linux/
+│       │   ├── dbus.zig       # Minimal D-Bus wire protocol client
+│       │   └── desktop.zig    # Desktop notifications (D-Bus + fork+setuid)
+│       └── macos/
+│           └── desktop.zig    # osascript `display notification` wrapper
 ├── config/
-│   ├── ssh-watcher.toml      # Example config
-│   └── ssh-watcher.service   # Systemd unit
+│   ├── ssh-watcher.toml                   # Example config
+│   ├── ssh-watcher.service                # Systemd unit (Linux)
+│   └── com.moldabekov.ssh-watcher.plist   # LaunchDaemon plist (macOS)
 ├── packaging/
 │   ├── postinstall.sh         # DEB/RPM post-install (systemctl daemon-reload)
 │   └── preremove.sh           # DEB/RPM pre-remove (stop + disable service)
 ├── nfpm.yaml                  # DEB/RPM package definition
-└── install.sh                 # Install script for source builds
+└── install.sh                 # Platform-aware install script (Linux + macOS)
 ```
 
 ## License

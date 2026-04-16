@@ -187,6 +187,55 @@ jobs:
           name: ssh-watcher-x86_64-linux
           path: zig-out/release/ssh-watcher-x86_64-linux
 
+  build-macos:
+    name: macOS build (x86_64 + aarch64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Zig
+        id: cache-zig-macos
+        uses: actions/cache@v4
+        with:
+          path: zig-aarch64-macos-${{ env.ZIG_VERSION }}
+          key: zig-macos-aarch64-${{ env.ZIG_VERSION }}
+      - name: Install Zig
+        if: steps.cache-zig-macos.outputs.cache-hit != 'true'
+        run: curl -L "https://ziglang.org/download/$ZIG_VERSION/zig-aarch64-macos-$ZIG_VERSION.tar.xz" | tar xJ
+      - name: Add Zig to PATH
+        run: echo "$PWD/zig-aarch64-macos-$ZIG_VERSION" >> "$GITHUB_PATH"
+
+      - name: Run tests
+        run: zig build test
+
+      - name: Build both architectures
+        run: zig build release-macos
+
+      - name: Ad-hoc codesign
+        run: |
+          codesign --sign - --force zig-out/release/ssh-watcher-x86_64-macos
+          codesign --sign - --force zig-out/release/ssh-watcher-aarch64-macos
+
+      - name: Verify binaries
+        run: |
+          for bin in zig-out/release/ssh-watcher-x86_64-macos zig-out/release/ssh-watcher-aarch64-macos; do
+            file "$bin"
+            ls -lh "$bin"
+            codesign --verify --verbose "$bin" || true
+          done
+
+      - name: Upload x86_64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-watcher-x86_64-macos
+          path: zig-out/release/ssh-watcher-x86_64-macos
+
+      - name: Upload aarch64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-watcher-aarch64-macos
+          path: zig-out/release/ssh-watcher-aarch64-macos
+
   package:
     name: Build DEB/RPM packages
     needs: [build-static, build-dynamic]
@@ -241,7 +290,7 @@ jobs:
 
   release:
     name: Create release
-    needs: [build-static, build-dynamic, package]
+    needs: [build-static, build-dynamic, build-macos, package]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -256,5 +305,7 @@ jobs:
           files: |
             artifacts/ssh-watcher-x86_64-linux-static/ssh-watcher-x86_64-linux-static
             artifacts/ssh-watcher-x86_64-linux/ssh-watcher-x86_64-linux
+            artifacts/ssh-watcher-x86_64-macos/ssh-watcher-x86_64-macos
+            artifacts/ssh-watcher-aarch64-macos/ssh-watcher-aarch64-macos
             artifacts/ssh-watcher-packages/ssh-watcher*.deb
             artifacts/ssh-watcher-packages/ssh-watcher*.rpm
