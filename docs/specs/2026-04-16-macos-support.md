@@ -47,9 +47,14 @@ All moved files need relative import updates:
 | `detect/linux/ebpf.zig` | `@import("../event.zig")` -> `@import("../../event.zig")` |
 | `detect/linux/journal.zig` | `@import("logfile.zig")` -> `@import("../ip.zig")` (use ip.parseIPInto) |
 | `detect/linux/journal.zig` | `@import("backend.zig")` -> `@import("../backend.zig")` |
+| `detect/linux/journal.zig` | `@import("../event.zig")` -> `@import("../../event.zig")` |
+| `detect/linux/journal.zig` | `@import("patterns.zig")` -> `@import("../patterns.zig")` |
 | `detect/linux/logfile.zig` | `@import("backend.zig")` -> `@import("../backend.zig")` |
+| `detect/linux/logfile.zig` | `@import("../event.zig")` -> `@import("../../event.zig")` |
+| `detect/linux/logfile.zig` | `@import("patterns.zig")` -> `@import("../patterns.zig")` |
 | `detect/linux/utmp.zig` | `@import("logfile.zig")` -> `@import("../ip.zig")` |
 | `detect/linux/utmp.zig` | `@import("backend.zig")` -> `@import("../backend.zig")` |
+| `detect/linux/utmp.zig` | `@import("../event.zig")` -> `@import("../../event.zig")` |
 | `notify/linux/desktop.zig` | `@import("sink.zig")` -> `@import("../sink.zig")` |
 | `notify/linux/desktop.zig` | `@import("../dbus.zig")` -> `@import("dbus.zig")` (same dir now) |
 | `notify/linux/desktop.zig` | `@import("../template.zig")` -> `@import("../../template.zig")` |
@@ -268,6 +273,8 @@ macOS ships with BSM audit. The kernel writes audit records when sshd authentica
 Do this before writing any Zig code for this backend.
 
 **Events produced:** auth_success, auth_failure, disconnect (session close audit event).
+
+**Session timeout inference:** OpenBSM produces auth_failure events directly (via the return token's error status), unlike eBPF which infers failures via timeout. Therefore `audit_bsm` should be excluded from the session timeout mechanism in `main.zig` alongside `ebpf` (i.e., `if (backend_type != .ebpf and backend_type != .audit_bsm)`).
 
 **Limitation:** No raw TCP connection event (unlike eBPF's `inet_sock_set_state`). Connection events not available from this backend. SIP may block access to `/dev/auditpipe` (see Security Considerations).
 
