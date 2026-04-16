@@ -1,6 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
-const linux = std.os.linux;
+
+const is_linux = builtin.os.tag == .linux;
+const is_macos = builtin.os.tag == .macos;
+const linux = if (is_linux) std.os.linux else void;
+
 pub const event = @import("event.zig");
 const ring_buffer = @import("ring_buffer.zig");
 const BroadcastBuffer = ring_buffer.BroadcastBuffer;
@@ -9,12 +14,12 @@ const config_mod = @import("config.zig");
 const Config = config_mod.Config;
 const session_mod = @import("session.zig");
 const backend_mod = @import("detect/backend.zig");
-const logfile = @import("detect/linux/logfile.zig");
-const journal = @import("detect/linux/journal.zig");
-const ebpf = @import("detect/linux/ebpf.zig");
-const utmp_mod = @import("detect/linux/utmp.zig");
+const logfile = if (is_linux) @import("detect/linux/logfile.zig") else void;
+const journal = if (is_linux) @import("detect/linux/journal.zig") else void;
+const ebpf = if (is_linux) @import("detect/linux/ebpf.zig") else void;
+const utmp_mod = if (is_linux) @import("detect/linux/utmp.zig") else void;
 const logwriter = @import("notify/logwriter.zig");
-const desktop = @import("notify/linux/desktop.zig");
+const desktop = if (is_linux) @import("notify/linux/desktop.zig") else void;
 const webhook = @import("notify/webhook.zig");
 const sink_mod = @import("notify/sink.zig");
 
@@ -38,7 +43,7 @@ fn setupSignals() void {
     const sa = posix.Sigaction{
         .handler = .{ .handler = &handleSignal },
         .mask = std.mem.zeroes(posix.sigset_t),
-        .flags = linux.SA.RESTART,
+        .flags = if (is_linux) linux.SA.RESTART else 0,
     };
     posix.sigaction(posix.SIG.TERM, &sa, null);
     posix.sigaction(posix.SIG.INT, &sa, null);
@@ -187,9 +192,15 @@ fn runBackend(backend_type: backend_mod.BackendType, ctx: *backend_mod.Context) 
     }
 }
 
+/// Comptime-selected sdNotify: real impl on Linux, no-op on other platforms.
+/// Avoids referencing `linux.*` types on macOS where `linux` is `void`.
+const sdNotify = if (is_linux) sdNotifyImpl else struct {
+    fn f(_: []const u8) void {}
+}.f;
+
 /// Send sd_notify state to systemd via raw Unix datagram socket.
 /// No libsystemd dependency — just a socket write to $NOTIFY_SOCKET.
-fn sdNotify(state: []const u8) void {
+fn sdNotifyImpl(state: []const u8) void {
     const addr_str = std.posix.getenv("NOTIFY_SOCKET") orelse return;
     if (addr_str.len == 0) return;
 
@@ -259,14 +270,17 @@ test {
     _ = @import("template.zig");
     _ = @import("detect/patterns.zig");
     _ = @import("detect/backend.zig");
-    _ = @import("detect/linux/logfile.zig");
-    _ = @import("detect/linux/journal.zig");
-    _ = @import("detect/linux/ebpf.zig");
-    _ = @import("detect/linux/utmp.zig");
+    _ = @import("detect/ip.zig");
     _ = @import("session.zig");
     _ = @import("notify/sink.zig");
     _ = @import("notify/logwriter.zig");
-    _ = @import("notify/linux/dbus.zig");
-    _ = @import("notify/linux/desktop.zig");
     _ = @import("notify/webhook.zig");
+    if (is_linux) {
+        _ = @import("detect/linux/logfile.zig");
+        _ = @import("detect/linux/journal.zig");
+        _ = @import("detect/linux/ebpf.zig");
+        _ = @import("detect/linux/utmp.zig");
+        _ = @import("notify/linux/dbus.zig");
+        _ = @import("notify/linux/desktop.zig");
+    }
 }
