@@ -1,7 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const SSHEvent = @import("../event.zig").SSHEvent;
 const BroadcastBuffer = @import("../ring_buffer.zig").BroadcastBuffer;
 const Config = @import("../config.zig").Config;
+
+const is_linux = builtin.os.tag == .linux;
+const is_macos = builtin.os.tag == .macos;
 
 pub const Context = struct {
     ring: *BroadcastBuffer(SSHEvent),
@@ -17,23 +21,49 @@ pub const Context = struct {
     }
 };
 
-pub const BackendType = enum { ebpf, journal, logfile, utmp };
+pub const BackendType = enum {
+    // Linux
+    ebpf,
+    journal,
+    logfile,
+    utmp,
+    // macOS
+    logstream,
+    audit_bsm,
+    utmpx_bsd,
+};
 
 pub fn probe(config: *const Config) ?BackendType {
     const req = config.backend;
-    if (req == .ebpf or req == .auto) {
-        if (checkPath("/sys/kernel/btf/vmlinux")) return .ebpf;
-        if (req == .ebpf) return null;
+    if (is_linux) {
+        if (req == .ebpf or req == .auto) {
+            if (checkPath("/sys/kernel/btf/vmlinux")) return .ebpf;
+            if (req == .ebpf) return null;
+        }
+        if (req == .journal or req == .auto) {
+            if (checkPath("/run/systemd/system")) return .journal;
+            if (req == .journal) return null;
+        }
+        if (req == .logfile or req == .auto) {
+            if (checkPath("/var/log/auth.log") or checkPath("/var/log/secure")) return .logfile;
+            if (req == .logfile) return null;
+        }
+        if (req == .utmp or req == .auto) return .utmp;
     }
-    if (req == .journal or req == .auto) {
-        if (checkPath("/run/systemd/system")) return .journal;
-        if (req == .journal) return null;
+    if (is_macos) {
+        if (req == .logstream or req == .auto) {
+            if (checkPath("/usr/bin/log")) return .logstream;
+            if (req == .logstream) return null;
+        }
+        if (req == .audit_bsm or req == .auto) {
+            if (checkPath("/dev/auditpipe")) return .audit_bsm;
+            if (req == .audit_bsm) return null;
+        }
+        if (req == .utmpx_bsd or req == .auto) {
+            std.log.warn("utmpx is deprecated on macOS 10.9+, may produce no events", .{});
+            return .utmpx_bsd;
+        }
     }
-    if (req == .logfile or req == .auto) {
-        if (checkPath("/var/log/auth.log") or checkPath("/var/log/secure")) return .logfile;
-        if (req == .logfile) return null;
-    }
-    if (req == .utmp or req == .auto) return .utmp;
     return null;
 }
 
@@ -44,5 +74,7 @@ fn checkPath(path: []const u8) bool {
 
 test "probe returns something on this system" {
     const config = Config{};
-    try std.testing.expect(probe(&config) != null);
+    if (is_linux or is_macos) {
+        try std.testing.expect(probe(&config) != null);
+    }
 }

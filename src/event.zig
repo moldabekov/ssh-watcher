@@ -30,6 +30,9 @@ pub const Backend = enum(u8) {
     journal = 1,
     logfile = 2,
     utmp = 3,
+    audit_bsm = 4,
+    logstream = 5,
+    utmpx_bsd = 6,
 
     pub fn toString(self: Backend) []const u8 {
         return switch (self) {
@@ -37,6 +40,9 @@ pub const Backend = enum(u8) {
             .journal => "journal",
             .logfile => "logfile",
             .utmp => "utmp",
+            .audit_bsm => "audit_bsm",
+            .logstream => "logstream",
+            .utmpx_bsd => "utmpx_bsd",
         };
     }
 };

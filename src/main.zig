@@ -146,11 +146,9 @@ pub fn main() !void {
             }
         }
 
-        // Session timeout inference — only for logfile/journal/utmp backends.
-        // eBPF detects auth_success directly via exec tracepoint and can't
-        // correlate connection PIDs to auth PIDs, so timeout inference would
-        // produce false auth_failure events.
-        if (backend_type != .ebpf) {
+        // Session timeout inference — only for logfile/journal/utmp/logstream/utmpx backends.
+        // eBPF and OpenBSM detect auth events directly and don't need inference.
+        if (backend_type != .ebpf and backend_type != .audit_bsm) {
             while (session_consumer.pop()) |ev| {
                 sessions.update(&ev);
             }
@@ -185,10 +183,13 @@ pub fn main() !void {
 
 fn runBackend(backend_type: backend_mod.BackendType, ctx: *backend_mod.Context) void {
     switch (backend_type) {
-        .logfile => logfile.run(ctx),
-        .journal => journal.run(ctx),
-        .ebpf => ebpf.run(ctx),
-        .utmp => utmp_mod.run(ctx),
+        .logfile => if (is_linux) logfile.run(ctx),
+        .journal => if (is_linux) journal.run(ctx),
+        .ebpf => if (is_linux) ebpf.run(ctx),
+        .utmp => if (is_linux) utmp_mod.run(ctx),
+        .logstream => {}, // Phase 2: Task 7
+        .audit_bsm => {}, // Phase 2: Task 9
+        .utmpx_bsd => {}, // Phase 2: Task 8
     }
 }
 

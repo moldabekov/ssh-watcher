@@ -6,6 +6,9 @@ pub const Backend = enum {
     journal,
     logfile,
     utmp,
+    audit_bsm,
+    logstream,
+    utmpx_bsd,
 
     pub fn fromString(s: []const u8) !Backend {
         if (std.mem.eql(u8, s, "auto")) return .auto;
@@ -13,6 +16,9 @@ pub const Backend = enum {
         if (std.mem.eql(u8, s, "journal")) return .journal;
         if (std.mem.eql(u8, s, "logfile")) return .logfile;
         if (std.mem.eql(u8, s, "utmp")) return .utmp;
+        if (std.mem.eql(u8, s, "audit_bsm")) return .audit_bsm;
+        if (std.mem.eql(u8, s, "logstream")) return .logstream;
+        if (std.mem.eql(u8, s, "utmpx_bsd")) return .utmpx_bsd;
         return error.InvalidValue;
     }
 };
