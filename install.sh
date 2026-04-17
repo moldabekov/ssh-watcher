@@ -5,6 +5,33 @@ PREFIX="${PREFIX:-/usr}"
 SYSCONFDIR="${SYSCONFDIR:-/etc}"
 OS="$(uname -s)"
 
+# Reject env-provided paths that contain anything outside a conservative
+# safe-path character set. This closes injection vectors via `sudo -E` /
+# `env_keep` — e.g., a $BINDIR containing XML-tag bytes that would
+# otherwise get sed-interpolated into the installed plist and inject an
+# attacker-chosen EnvironmentVariables block.
+validate_path() {
+    name="$1"
+    value="$2"
+    [ -z "$value" ] && return 0
+    case "$value" in
+      /*) : ;;
+      *) echo "error: $name must be an absolute path (got: '$value')" >&2; exit 1 ;;
+    esac
+    case "$value" in
+      *[!a-zA-Z0-9_/.-]*)
+        echo "error: $name contains invalid characters (allowed: a-zA-Z0-9_/.-)" >&2
+        exit 1
+        ;;
+    esac
+}
+
+validate_path PREFIX "$PREFIX"
+validate_path SYSCONFDIR "$SYSCONFDIR"
+validate_path SYSTEMDDIR "${SYSTEMDDIR:-}"
+validate_path BINDIR "${BINDIR:-}"
+validate_path DESTDIR "${DESTDIR:-}"
+
 # Select binary. Linux tries static -> dynamic -> dev. macOS picks the
 # architecture matching the host (`uname -m`) so Intel Macs don't end up
 # with an aarch64 binary that silently fails to launch.
@@ -52,7 +79,9 @@ case "$OS" in
     SYSTEMDDIR="${SYSTEMDDIR:-/usr/lib/systemd/system}"
 
     install -Dm755 "$BIN_SRC" "$DESTDIR$BINDIR/ssh-watcher"
-    install -Dm644 config/ssh-watcher.toml "$DESTDIR$SYSCONFDIR/ssh-watcher/config.toml"
+    # 0o640 on config: webhook URLs may embed bearer tokens / signing
+    # secrets, so don't default to world-readable.
+    install -Dm640 config/ssh-watcher.toml "$DESTDIR$SYSCONFDIR/ssh-watcher/config.toml"
     install -Dm644 config/ssh-watcher.service "$DESTDIR$SYSTEMDDIR/ssh-watcher.service"
 
     if [ -z "$DESTDIR" ] && command -v systemctl >/dev/null 2>&1; then
@@ -76,7 +105,8 @@ case "$OS" in
     install -m 755 "$BIN_SRC" "$DESTDIR$BINDIR/ssh-watcher"
 
     install -d "$DESTDIR$SYSCONFDIR/ssh-watcher"
-    install -m 644 config/ssh-watcher.toml "$DESTDIR$SYSCONFDIR/ssh-watcher/config.toml"
+    # 0o640 on config — see Linux branch comment above.
+    install -m 640 config/ssh-watcher.toml "$DESTDIR$SYSCONFDIR/ssh-watcher/config.toml"
 
     # Rewrite ProgramArguments path with the actual $BINDIR so a custom
     # BINDIR override doesn't leave the plist pointing at /usr/local/bin.

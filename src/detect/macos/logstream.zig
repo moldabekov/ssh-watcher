@@ -48,11 +48,16 @@ fn runImpl(ctx: *Context) !void {
     }
 }
 
+// Absolute paths avoid PATH-planting attacks: a writable early-PATH entry
+// could otherwise replace `log`. /usr/bin/log is shipped with every macOS.
+const LOG_BIN = "/usr/bin/log";
+
 fn spawnAndRead(ctx: *Context) !void {
     var child = std.process.Child.init(
-        &.{ "log", "stream", "--process", "sshd", "--style", "compact", "--level", "info" },
+        &.{ LOG_BIN, "stream", "--process", "sshd", "--style", "compact", "--level", "info" },
         std.heap.page_allocator,
     );
+    child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Ignore;
     try child.spawn();
@@ -72,26 +77,31 @@ fn spawnAndRead(ctx: *Context) !void {
         };
         if (ready == 0) continue;
 
-        const hangup_mask: i16 = posix.POLL.HUP | posix.POLL.ERR | posix.POLL.NVAL;
-        if (pollfds[0].revents & hangup_mask != 0) return error.ChildHungUp;
-
-        const n = stdout.read(&read_buf) catch return error.ReadFailed;
-        if (n == 0) return error.EndOfStream;
-
-        for (read_buf[0..n]) |byte| {
-            if (byte == '\n') {
-                if (line_len > 0 and !truncated) {
-                    processLine(ctx, line_buf[0..line_len]);
+        // Drain readable bytes FIRST — when the child exits after writing its
+        // final buffer, both POLLIN and POLLHUP are set, and reacting to HUP
+        // before reading would drop the tail of the log.
+        const revents = pollfds[0].revents;
+        if (revents & posix.POLL.IN != 0) {
+            const n = stdout.read(&read_buf) catch return error.ReadFailed;
+            if (n == 0) return error.EndOfStream;
+            for (read_buf[0..n]) |byte| {
+                if (byte == '\n') {
+                    if (line_len > 0 and !truncated) {
+                        processLine(ctx, line_buf[0..line_len]);
+                    }
+                    line_len = 0;
+                    truncated = false;
+                } else if (line_len < line_buf.len) {
+                    line_buf[line_len] = byte;
+                    line_len += 1;
+                } else if (!truncated) {
+                    std.log.warn("logstream: line > {d} bytes, dropping", .{line_buf.len});
+                    truncated = true;
                 }
-                line_len = 0;
-                truncated = false;
-            } else if (line_len < line_buf.len) {
-                line_buf[line_len] = byte;
-                line_len += 1;
-            } else {
-                truncated = true;
             }
         }
+        const hangup_mask: i16 = posix.POLL.HUP | posix.POLL.ERR | posix.POLL.NVAL;
+        if (revents & hangup_mask != 0) return error.ChildHungUp;
     }
 }
 

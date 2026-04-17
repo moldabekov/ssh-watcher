@@ -40,11 +40,16 @@ fn scan(known: *std.AutoHashMap(u32, void), ctx: *Context, initial: bool) void {
     c.setutxent();
     while (c.getutxent()) |entry| {
         if (entry.*.ut_type != c.USER_PROCESS) continue;
-        const host = std.mem.sliceTo(&entry.*.ut_host, 0);
-        if (host.len == 0) continue; // local console login without host field
 
+        // Track every USER_PROCESS pid in current BEFORE filtering by host —
+        // matches the Linux utmp sibling. Skipping pids with empty host
+        // before populating current made them look like disconnects on
+        // the next iteration.
         const pid: u32 = @intCast(entry.*.ut_pid);
         current.put(pid, {}) catch continue;
+
+        const host = std.mem.sliceTo(&entry.*.ut_host, 0);
+        if (host.len == 0) continue; // local console login without host field
 
         if (known.contains(pid)) continue;
         known.put(pid, {}) catch continue;

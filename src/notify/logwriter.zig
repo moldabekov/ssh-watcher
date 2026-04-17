@@ -10,7 +10,10 @@ pub fn run(ctx: *sink.SinkContext) void {
 }
 
 fn runImpl(ctx: *sink.SinkContext) !void {
-    const file = try std.fs.createFileAbsolute(ctx.config.log_path, .{ .truncate = false });
+    // 0o640 so the log (which contains every username + source IP that
+    // touched sshd) is not world-readable by default. Operators can relax
+    // via umask or post-install chmod if they intentionally want readers.
+    const file = try std.fs.createFileAbsolute(ctx.config.log_path, .{ .truncate = false, .mode = 0o640 });
     defer file.close();
     try file.seekFromEnd(0);
 

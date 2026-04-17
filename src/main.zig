@@ -170,8 +170,18 @@ pub fn main() !void {
             should_dump.store(false, .release);
             std.debug.print("=== ssh-watcher status ===\n", .{});
             std.debug.print("backend: {s}\n", .{@tagName(backend_type)});
-            std.debug.print("ring buffer write pos: {d}\n", .{ring.write_pos.load(.monotonic)});
+            std.debug.print("ring buffer write pos: {d} (capacity: {d})\n", .{
+                ring.write_pos.load(.monotonic), ring.capacity,
+            });
             std.debug.print("active sessions: {d}\n", .{sessions.entries.count()});
+            // Per-consumer drop counters. Reads are best-effort (sink
+            // threads update their own cursors) — sufficient for an
+            // operator status dump. A consumer that is dropping events
+            // indicates its thread is slower than the event producer.
+            std.debug.print("drops (session): {d}\n", .{session_consumer.dropped});
+            if (log_ctx) |*lc| std.debug.print("drops (log):     {d}\n", .{lc.consumer.dropped});
+            if (desktop_ctx) |*dc| std.debug.print("drops (desktop): {d}\n", .{dc.consumer.dropped});
+            if (webhook_ctx) |*wc| std.debug.print("drops (webhook): {d}\n", .{wc.consumer.dropped});
             std.debug.print("===========================\n", .{});
         }
 

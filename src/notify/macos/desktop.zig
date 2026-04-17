@@ -1,22 +1,71 @@
 const std = @import("std");
+const posix = std.posix;
 const SSHEvent = @import("../../event.zig").SSHEvent;
 const Config = @import("../../config.zig").Config;
 const template = @import("../../template.zig");
 const sink = @import("../sink.zig");
 
+/// Absolute path avoids PATH-planting attacks: osascript is at this location
+/// on every supported macOS release. Never resolve via PATH from a root
+/// LaunchDaemon whose env we don't fully control.
+const OSASCRIPT_BIN = "/usr/bin/osascript";
+
+/// Minimum gap between two successive notification spawns. An attacker can
+/// trigger hundreds of failed-auth events per second; without this throttle
+/// each one would fork an osascript process, producing a noisy notification
+/// storm. First event per window still fires; additional ones are dropped
+/// until the cooldown elapses.
+const NOTIFY_COOLDOWN_NS: i128 = 200 * std.time.ns_per_ms;
+
+/// Max time we wait for an osascript child to finish before killing it.
+/// osascript can hang indefinitely when the user session is in a weird
+/// state (TCC prompt with no UI to respond). Keeping this tight protects
+/// the sink thread from stalling and letting the ring lap.
+const OSASCRIPT_TIMEOUT_NS: u64 = 3 * std.time.ns_per_s;
+
+/// Retry probeOsascript this often if the initial probe fails. macOS
+/// LaunchDaemons start before any user session, so the first probe often
+/// fails even on a healthy system. Retry periodically so we light up once
+/// someone logs in.
+const REPROBE_INTERVAL_NS: i128 = 60 * std.time.ns_per_s;
+
 pub fn run(ctx: *sink.SinkContext) void {
-    if (!probeOsascript()) {
-        std.log.warn("desktop: osascript unavailable or no user session; disabling desktop sink", .{});
-        return;
+    var ready = probeOsascript();
+    var next_reprobe: i128 = if (ready) 0 else std.time.nanoTimestamp() + REPROBE_INTERVAL_NS;
+    if (!ready) {
+        std.log.warn("desktop: osascript probe failed (no user session?); will retry every {d}s", .{
+            @divTrunc(REPROBE_INTERVAL_NS, std.time.ns_per_s),
+        });
+    } else {
+        // `display notification` sourced from osascript appears in macOS
+        // Notification Center as "Script Editor", not "ssh-watcher" — this
+        // is a platform limit of the AppleScript path. A companion
+        // LaunchAgent per-user is required for proper branding.
+        std.log.info("desktop: notifications will appear as 'Script Editor' in Notification Center", .{});
     }
-    // `display notification` sourced from osascript appears in macOS Notification
-    // Center as "Script Editor", not "ssh-watcher" — this is a platform limit
-    // of the AppleScript path. Wrap with `terminal-notifier` for custom branding.
-    std.log.info("desktop: notifications will appear as 'Script Editor' in Notification Center", .{});
+
+    var last_notify_ns: i128 = 0;
 
     while (!ctx.stopped()) {
+        if (!ready) {
+            const now = std.time.nanoTimestamp();
+            if (now >= next_reprobe) {
+                ready = probeOsascript();
+                if (ready) {
+                    std.log.info("desktop: osascript now available, enabling notifications", .{});
+                } else {
+                    next_reprobe = now + REPROBE_INTERVAL_NS;
+                }
+            }
+            std.Thread.sleep(500 * std.time.ns_per_ms);
+            continue;
+        }
+
         if (ctx.consumer.pop()) |ev| {
             if (!sink.shouldNotify(ctx.config, ev.event_type)) continue;
+            const now = std.time.nanoTimestamp();
+            if (now - last_notify_ns < NOTIFY_COOLDOWN_NS) continue;
+            last_notify_ns = now;
             sendNotification(ctx.config, &ev);
         } else {
             std.Thread.sleep(50 * std.time.ns_per_ms);
@@ -29,14 +78,17 @@ pub fn run(ctx: *sink.SinkContext) void {
 /// without a logged-in user cannot display notifications).
 fn probeOsascript() bool {
     var child = std.process.Child.init(
-        &.{ "osascript", "-e", "return 1" },
+        &.{ OSASCRIPT_BIN, "-e", "return 1" },
         std.heap.page_allocator,
     );
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;
     child.spawn() catch return false;
-    const term = child.wait() catch return false;
+    const term = waitWithTimeout(&child, OSASCRIPT_TIMEOUT_NS) orelse {
+        std.log.debug("desktop: probe osascript timed out", .{});
+        return false;
+    };
     return switch (term) {
         .Exited => |code| code == 0,
         else => false,
@@ -63,7 +115,7 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
     // for argv/env duplication during spawn() and small pipe bookkeeping.
     // Allocations are small and short-lived.
     var child = std.process.Child.init(
-        &.{ "osascript", "-e", script },
+        &.{ OSASCRIPT_BIN, "-e", script },
         std.heap.page_allocator,
     );
     child.stdin_behavior = .Ignore;
@@ -71,8 +123,8 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
     child.stderr_behavior = .Ignore;
     child.spawn() catch return;
 
-    const term = child.wait() catch |err| {
-        std.log.debug("desktop: osascript wait failed: {}", .{err});
+    const term = waitWithTimeout(&child, OSASCRIPT_TIMEOUT_NS) orelse {
+        std.log.debug("desktop: osascript timed out after {d}ns; killed", .{OSASCRIPT_TIMEOUT_NS});
         return;
     };
     switch (term) {
@@ -81,6 +133,39 @@ fn sendNotification(config: *const Config, ev: *const SSHEvent) void {
         },
         else => std.log.debug("desktop: osascript terminated abnormally: {}", .{term}),
     }
+}
+
+/// Non-blocking wait loop. Polls waitpid(WNOHANG) until the child exits
+/// or timeout_ns elapses. On timeout, sends SIGKILL and reaps. Returns the
+/// actual Term on clean exit, or null on timeout (child was killed).
+fn waitWithTimeout(child: *std.process.Child, timeout_ns: u64) ?std.process.Child.Term {
+    const pid = child.id;
+    const poll_ns: u64 = 50 * std.time.ns_per_ms;
+    var waited: u64 = 0;
+    while (waited < timeout_ns) {
+        const res = posix.waitpid(pid, std.posix.W.NOHANG);
+        if (res.pid != 0) {
+            const term = decodeStatus(res.status);
+            child.term = term;
+            return term;
+        }
+        std.Thread.sleep(poll_ns);
+        waited += poll_ns;
+    }
+    // Timed out — hard kill and reap.
+    _ = posix.kill(pid, posix.SIG.KILL) catch {};
+    const res = posix.waitpid(pid, 0);
+    child.term = decodeStatus(res.status);
+    return null;
+}
+
+fn decodeStatus(status: u32) std.process.Child.Term {
+    // POSIX status encoding: low byte = signal or 0, next byte = exit code.
+    const low: u8 = @truncate(status & 0x7f);
+    const high: u8 = @truncate((status >> 8) & 0xff);
+    if (low == 0) return .{ .Exited = high };
+    if (low == 0x7f) return .{ .Stopped = high };
+    return .{ .Signal = low };
 }
 
 /// Escape AppleScript string-literal metacharacters. {username} and IP
