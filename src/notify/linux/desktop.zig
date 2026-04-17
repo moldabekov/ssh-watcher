@@ -9,6 +9,11 @@ const sink = @import("../sink.zig");
 
 const c = @cImport({ @cInclude("pwd.h"); });
 
+/// Minimum gap between two successive notification spawns. A brute-force
+/// SSH probe generates many failed-auth events per second; without this
+/// throttle the notify-send fallback path would fork a child per event.
+const NOTIFY_COOLDOWN_NS: i128 = 200 * std.time.ns_per_ms;
+
 pub fn run(ctx: *sink.SinkContext) void {
     // Probe once at startup — if no notification path works, disable silently
     if (!probeNotifications()) {
@@ -16,9 +21,14 @@ pub fn run(ctx: *sink.SinkContext) void {
         return;
     }
 
+    var last_notify_ns: i128 = 0;
+
     while (!ctx.stopped()) {
         if (ctx.consumer.pop()) |ev| {
             if (!sink.shouldNotify(ctx.config, ev.event_type)) continue;
+            const now = std.time.nanoTimestamp();
+            if (now - last_notify_ns < NOTIFY_COOLDOWN_NS) continue;
+            last_notify_ns = now;
             sendNotification(ctx.config, &ev);
         } else {
             std.Thread.sleep(50 * std.time.ns_per_ms);

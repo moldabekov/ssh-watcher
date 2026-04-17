@@ -200,14 +200,24 @@ pub fn main() !void {
 }
 
 fn runBackend(backend_type: backend_mod.BackendType, ctx: *backend_mod.Context) void {
-    switch (backend_type) {
-        .logfile => if (is_linux) logfile.run(ctx),
-        .journal => if (is_linux) journal.run(ctx),
-        .ebpf => if (is_linux) ebpf.run(ctx),
-        .utmp => if (is_linux) utmp_mod.run(ctx),
-        .logstream => if (is_macos) logstream.run(ctx),
-        .audit_bsm => if (is_macos) audit_bsm.run(ctx),
-        .utmpx_bsd => if (is_macos) utmpx.run(ctx),
+    // probe() can never return a foreign-OS backend, so each branch only
+    // needs to dispatch its own set. `unreachable` tells the optimizer
+    // (and human readers) what the invariant is.
+    if (is_linux) {
+        switch (backend_type) {
+            .logfile => logfile.run(ctx),
+            .journal => journal.run(ctx),
+            .ebpf => ebpf.run(ctx),
+            .utmp => utmp_mod.run(ctx),
+            .logstream, .audit_bsm, .utmpx_bsd => unreachable,
+        }
+    } else if (is_macos) {
+        switch (backend_type) {
+            .logstream => logstream.run(ctx),
+            .audit_bsm => audit_bsm.run(ctx),
+            .utmpx_bsd => utmpx.run(ctx),
+            .ebpf, .journal, .logfile, .utmp => unreachable,
+        }
     }
 }
 
@@ -219,7 +229,15 @@ const sdNotify = if (is_linux) sdNotifyImpl else struct {
 
 /// Send sd_notify state to systemd via raw Unix datagram socket.
 /// No libsystemd dependency — just a socket write to $NOTIFY_SOCKET.
+/// Defense-in-depth: this function references linux.* types (AF.UNIX,
+/// SOCK.DGRAM, sockaddr.un) which resolve to `void` members on macOS.
+/// The comptime-selected wrapper above (`sdNotify`) is what prevents
+/// the analyzer from looking inside this body on non-Linux targets;
+/// this assertion makes the intent explicit.
 fn sdNotifyImpl(state: []const u8) void {
+    comptime {
+        if (!is_linux) @compileError("sdNotifyImpl must only be compiled for linux");
+    }
     const addr_str = std.posix.getenv("NOTIFY_SOCKET") orelse return;
     if (addr_str.len == 0) return;
 
