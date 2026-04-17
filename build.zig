@@ -81,13 +81,17 @@ pub fn build(b: *std.Build) void {
     // --- Release: macOS (x86_64 + aarch64) ---
     // zig build release-macos
     // Cross-compiles both architectures. No UPX (breaks macOS code signing).
-    const macos_step = b.step("release-macos", "Build macOS production binaries (ReleaseSmall, LTO, strip)");
+    // LTO is disabled on macOS: Zig uses the system linker (ld64) by
+    // default here to keep ad-hoc codesigning compatible, and ld64
+    // does not speak LLVM bitcode. Switching to LLD would require
+    // re-signing gymnastics. ReleaseSmall + strip still gets us ~300 KB.
+    const macos_step = b.step("release-macos", "Build macOS production binaries (ReleaseSmall, strip)");
     inline for (.{
         .{ .arch = std.Target.Cpu.Arch.x86_64, .name = "x86_64-macos" },
         .{ .arch = std.Target.Cpu.Arch.aarch64, .name = "aarch64-macos" },
     }) |rt| {
         const resolved = b.resolveTargetQuery(.{ .cpu_arch = rt.arch, .os_tag = .macos });
-        const rel_exe = addExe(b, resolved, .ReleaseSmall, true, true, null);
+        const rel_exe = addExe(b, resolved, .ReleaseSmall, true, false, null);
         const install = b.addInstallArtifact(rel_exe, .{
             .dest_dir = .{ .override = .{ .custom = "release" } },
             .dest_sub_path = "ssh-watcher-" ++ rt.name,
@@ -125,6 +129,17 @@ fn addExe(
         exe.root_module.linkSystemLibrary("bpf", .{});
     } else if (os_tag == .macos) {
         exe.root_module.linkSystemLibrary("bsm", .{});
+        // Zig 0.15.2 does not auto-discover macOS SDK library paths
+        // when cross-compiling. Read SDKROOT (set by CI via
+        // `xcrun --show-sdk-path`) and add <sdk>/usr/lib so linkSystemLibrary
+        // can resolve libbsm.tbd.
+        if (std.process.getEnvVarOwned(b.allocator, "SDKROOT")) |sdkroot| {
+            exe.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sdkroot}) });
+            exe.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdkroot}) });
+        } else |_| {
+            // SDKROOT unset — build may still succeed on a native macOS
+            // host if xcrun auto-discovery works.
+        }
     }
     exe.root_module.link_libc = true;
     if (lto) exe.want_lto = true;

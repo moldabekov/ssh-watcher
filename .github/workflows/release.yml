@@ -13,6 +13,11 @@ env:
   ELOGIND_VERSION: "255.22"
   LIBBPF_VERSION: "v1.7.0"
   UPX_VERSION: "5.1.1"
+  # Opt into Node 24 runtime for all JS actions (including transitive
+  # ones like actions/cache/restore pinned inside third-party composite
+  # actions such as awalsh128/cache-apt-pkgs-action). GitHub forces this
+  # on 2026-06-02; opting in now surfaces any incompatibility early.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build-static:
@@ -35,11 +40,11 @@ jobs:
             dbus-dev acl-dev libseccomp-dev linux-pam-dev pcre2-dev m4 binutils \
             python3 py3-jinja2 gperf gettext-dev
 
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Cache Zig
         id: cache-zig
-        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4.1.2
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: zig-x86_64-linux-${{ env.ZIG_VERSION }}
           key: zig-alpine-${{ env.ZIG_VERSION }}
@@ -54,7 +59,7 @@ jobs:
 
       - name: Cache musl sysroot
         id: cache-sysroot
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /tmp/musl-sysroot
           key: musl-alpine-elogind-${{ env.ELOGIND_VERSION }}-${{ env.LIBBPF_VERSION }}-v32
@@ -120,7 +125,7 @@ jobs:
 
       - name: Save musl sysroot cache
         if: steps.cache-sysroot.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /tmp/musl-sysroot
           key: musl-alpine-elogind-${{ env.ELOGIND_VERSION }}-${{ env.LIBBPF_VERSION }}-v32
@@ -137,7 +142,7 @@ jobs:
           readelf -d "$BIN" 2>&1 | grep NEEDED || echo "Fully static - no NEEDED entries"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ssh-watcher-x86_64-linux-static
           path: zig-out/release/ssh-watcher-x86_64-linux-static
@@ -146,17 +151,17 @@ jobs:
     name: Dynamic build (x86_64 glibc)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install deps
-        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
         with:
           packages: clang llvm libsystemd-dev libbpf-dev
           version: v1
 
       - name: Cache Zig
         id: cache-zig-dyn
-        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4.1.2
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: zig-x86_64-linux-${{ env.ZIG_VERSION }}
           key: zig-ubuntu-${{ env.ZIG_VERSION }}
@@ -168,7 +173,7 @@ jobs:
 
       - name: Cache UPX
         id: cache-upx-dyn
-        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4.1.2
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /usr/local/bin/upx
           key: upx-${{ env.UPX_VERSION }}
@@ -182,7 +187,7 @@ jobs:
         run: zig build release
 
       - name: Upload artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ssh-watcher-x86_64-linux
           path: zig-out/release/ssh-watcher-x86_64-linux
@@ -191,11 +196,11 @@ jobs:
     name: macOS build (x86_64 + aarch64)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Cache Zig
         id: cache-zig-macos
-        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4.1.2
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: zig-aarch64-macos-${{ env.ZIG_VERSION }}
           key: zig-macos-aarch64-${{ env.ZIG_VERSION }}
@@ -204,6 +209,12 @@ jobs:
         run: curl -L "https://ziglang.org/download/$ZIG_VERSION/zig-aarch64-macos-$ZIG_VERSION.tar.xz" | tar xJ
       - name: Add Zig to PATH
         run: echo "$PWD/zig-aarch64-macos-$ZIG_VERSION" >> "$GITHUB_PATH"
+
+      - name: Resolve macOS SDK
+        # Zig's linkSystemLibrary needs a sysroot to locate libbsm.tbd.
+        # Auto-discovery via xcrun is inconsistent inside GH runners, so
+        # export SDKROOT explicitly for downstream Zig invocations.
+        run: echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
 
       - name: Run tests
         run: zig build test
@@ -229,13 +240,13 @@ jobs:
           done
 
       - name: Upload x86_64 artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ssh-watcher-x86_64-macos
           path: zig-out/release/ssh-watcher-x86_64-macos
 
       - name: Upload aarch64 artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ssh-watcher-aarch64-macos
           path: zig-out/release/ssh-watcher-aarch64-macos
@@ -246,14 +257,14 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ssh-watcher-x86_64-linux-static
           path: artifacts/static
 
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ssh-watcher-x86_64-linux
           path: artifacts/dynamic
@@ -285,7 +296,7 @@ jobs:
         run: ls -lh ssh-watcher*.{deb,rpm}
 
       - name: Upload packages
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ssh-watcher-packages
           path: |
@@ -298,11 +309,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
       - name: Create GitHub release
-        uses: softprops/action-gh-release@7b4da11513bf3f43f9999e90eabced41ab8bb048 # v2.2.0
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           draft: false
           generate_release_notes: true
