@@ -11,6 +11,12 @@ pub const Context = struct {
     ring: *BroadcastBuffer(SSHEvent),
     config: *const Config,
     should_stop: *std.atomic.Value(bool),
+    /// Count of log lines that the parser received but could not extract
+    /// an SSH event from. A rising counter indicates either a sshd log
+    /// format change upstream (Apple patches, OpenSSH version bump) or
+    /// unrelated process chatter leaking through a loose filter. Exposed
+    /// via SIGUSR1 status dump.
+    parse_misses: std.atomic.Value(u64) = .{ .raw = 0 },
 
     pub fn emit(self: *Context, ev: SSHEvent) void {
         self.ring.push(ev);
@@ -18,6 +24,10 @@ pub const Context = struct {
 
     pub fn stopped(self: *Context) bool {
         return self.should_stop.load(.acquire);
+    }
+
+    pub fn parseMiss(self: *Context) void {
+        _ = self.parse_misses.fetchAdd(1, .monotonic);
     }
 };
 

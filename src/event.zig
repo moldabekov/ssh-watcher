@@ -25,6 +25,12 @@ pub const EventType = enum(u8) {
     }
 };
 
+// NOTE: three Backend enums exist and must stay tag-name-aligned:
+//   - event.Backend       (here)          — wire-stable, JSON/webhook output
+//   - config.Backend                      — TOML user-facing names + 'auto'
+//   - detect.backend.BackendType          — internal dispatch key
+// The integer tags here are LOAD-BEARING for downstream log consumers.
+// Never renumber existing values; append new ones at the end.
 pub const Backend = enum(u8) {
     ebpf = 0,
     journal = 1,

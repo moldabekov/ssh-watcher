@@ -1,3 +1,13 @@
+// sshd log line parser. Shared by the Linux logfile/journal backends and
+// the macOS logstream backend. Assumes stock OpenSSH message formats:
+//   "Accepted password for <user> from <ip> port <port> ssh2"
+//   "Failed password for [invalid user ]<user> from <ip> port <port> ssh2"
+//   "Disconnected from user <user> <ip> port <port>"
+//   "Connection closed|reset by [authenticating user <user> ]<ip> port <port>"
+// macOS ships an Apple-patched OpenSSH; message text has historically
+// matched stock sshd. If Apple diverges (or OpenSSH bumps major versions),
+// the parser may silently stop producing events — Context.parse_misses
+// in backend.zig is surfaced via SIGUSR1 to detect this.
 const std = @import("std");
 const EventType = @import("../event.zig").EventType;
 

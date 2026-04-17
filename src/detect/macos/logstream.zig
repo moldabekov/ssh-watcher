@@ -107,12 +107,20 @@ fn spawnAndRead(ctx: *Context) !void {
 
 fn processLine(ctx: *Context, line: []const u8) void {
     // Strip macOS `log stream` timestamp prefix by locating the sshd marker.
-    // Supports both legacy sshd[PID] and modern sshd-session[PID] forms.
-    const marker = std.mem.indexOf(u8, line, "sshd-session[") orelse
-        std.mem.indexOf(u8, line, "sshd[") orelse return;
+    // macOS sshd emits `sshd[PID]`; OpenSSH 9.8+ on some platforms emits
+    // `sshd-session[PID]` instead. Require a preceding space so a username
+    // like "sshd" can't masquerade as a process marker in the middle of
+    // a log line.
+    const marker = findSshdMarker(line) orelse {
+        ctx.parseMiss();
+        return;
+    };
     const sshd_line = line[marker..];
 
-    const result = patterns.parseLine(sshd_line) orelse return;
+    const result = patterns.parseLine(sshd_line) orelse {
+        ctx.parseMiss();
+        return;
+    };
 
     var ev = SSHEvent{ .backend = .logstream };
     ev.timestamp = @intCast(@max(@as(i128, 0), std.time.nanoTimestamp()));
@@ -127,4 +135,19 @@ fn processLine(ctx: *Context, line: []const u8) void {
         ev.source_port = std.fmt.parseInt(u16, port_str, 10) catch 0;
     }
     ctx.emit(ev);
+}
+
+fn findSshdMarker(line: []const u8) ?usize {
+    // Match "sshd-session[" or "sshd[" only when preceded by whitespace
+    // (or at buffer start) so an attacker can't spoof the marker via a
+    // username/message that happens to contain "sshd[".
+    const markers = [_][]const u8{ "sshd-session[", "sshd[" };
+    for (markers) |needle| {
+        var search_start: usize = 0;
+        while (std.mem.indexOfPos(u8, line, search_start, needle)) |pos| {
+            if (pos == 0 or line[pos - 1] == ' ' or line[pos - 1] == '\t') return pos;
+            search_start = pos + 1;
+        }
+    }
+    return null;
 }

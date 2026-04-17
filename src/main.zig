@@ -182,6 +182,7 @@ pub fn main() !void {
             if (log_ctx) |*lc| std.debug.print("drops (log):     {d}\n", .{lc.consumer.dropped});
             if (desktop_ctx) |*dc| std.debug.print("drops (desktop): {d}\n", .{dc.consumer.dropped});
             if (webhook_ctx) |*wc| std.debug.print("drops (webhook): {d}\n", .{wc.consumer.dropped});
+            std.debug.print("parser misses:   {d}\n", .{detect_ctx.parse_misses.load(.monotonic)});
             std.debug.print("===========================\n", .{});
         }
 

@@ -20,7 +20,15 @@ fn runImpl(ctx: *Context) !void {
     var known = std.AutoHashMap(u32, void).init(std.heap.page_allocator);
     defer known.deinit();
 
+    // Two seed passes 500ms apart: sessions established during the ~2s
+    // window between daemon start and the first scheduled scan would
+    // otherwise enter `known` via the silent initial pass and never emit
+    // auth_success. This is more common on macOS than Linux because
+    // LaunchDaemon KeepAlive respawns tend to coincide with logins.
     scan(&known, ctx, true);
+    std.Thread.sleep(500 * std.time.ns_per_ms);
+    if (ctx.stopped()) return;
+    scan(&known, ctx, false);
     while (!ctx.stopped()) {
         // Chunked sleep so shutdown latency stays well under POLL_INTERVAL_NS.
         var waited: u64 = 0;
