@@ -30,7 +30,7 @@ const desktop = if (is_linux) @import("notify/linux/desktop.zig") else if (is_ma
 const webhook = @import("notify/webhook.zig");
 const sink_mod = @import("notify/sink.zig");
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const SYSTEM_CONFIG = "/etc/ssh-watcher/config.toml";
 
 var should_stop = std.atomic.Value(bool).init(false);
