@@ -115,12 +115,13 @@ fn addExe(
         }),
     });
 
-    // OS-conditional library linking. `linkSystemLibrary` strips a leading
-    // "lib" if present, so passing the base names keeps the two OS arms
-    // stylistically consistent.
+    // OS-conditional library linking. Names match each platform's
+    // pkg-config / framework lookup rules — "libsystemd" is the
+    // pkg-config package name (not just the SONAME), so we must keep
+    // the "lib" prefix here even though "bpf" and "bsm" omit it.
     const os_tag = target.result.os.tag;
     if (os_tag == .linux) {
-        exe.root_module.linkSystemLibrary("systemd", .{});
+        exe.root_module.linkSystemLibrary("libsystemd", .{});
         exe.root_module.linkSystemLibrary("bpf", .{});
     } else if (os_tag == .macos) {
         exe.root_module.linkSystemLibrary("bsm", .{});
